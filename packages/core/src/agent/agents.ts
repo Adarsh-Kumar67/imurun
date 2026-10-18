@@ -43,7 +43,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
       "You are in PLANNING mode. Investigate the codebase and produce a clear, ordered plan with " +
       "concrete file references. Do NOT modify files or run mutating commands; you may read files, " +
       "search, and run read-only commands.",
-    tools: ["read", "glob", "grep", "rag_search", "memory", "task"],
+    tools: ["read", "glob", "grep", "code_search", "web_search", "web_fetch", "memory", "task"],
     disabledTools: ["write", "edit", "shell"],
     builtin: true,
     source: "builtin",
@@ -67,7 +67,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     prompt:
       "You explore codebases and answer questions with precise file references. " +
       "Do not modify anything; return a concise, well-structured report.",
-    tools: ["read", "glob", "grep"],
+    tools: ["read", "glob", "grep", "code_search", "web_search", "web_fetch"],
     disabledTools: [],
     builtin: true,
     source: "builtin",

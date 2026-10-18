@@ -14,9 +14,10 @@ export const writeTool: ImurunTool = {
   description:
     "Write content to a file, creating it (and parent directories) if needed. " +
     "Modes: overwrite (default) replaces the whole file, append adds to the end, " +
-    "create refuses to touch an existing file. For a large file, write the first " +
-    "section with create/overwrite and each following section with append — a " +
-    "single call that runs past the output limit is cut off and wasted. " +
+    "create refuses to touch an existing file. " +
+    "Build a file up in small pieces: create it with the first few lines, then append the rest a few " +
+    "lines at a time. Never send a whole large file in one call — a call that runs past the output " +
+    "limit is cut off before anything is written, and everything you already appended is still on disk. " +
     "Use edit for a targeted change inside an existing file.",
   parameters: {
     type: "object",

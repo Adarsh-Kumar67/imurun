@@ -41,6 +41,12 @@ export const shellTool: ImurunTool = {
       command: { type: "string", description: "The command to run." },
       workdir: { type: "string", description: "Directory to run in (default: project directory)." },
       timeoutMs: { type: "number", description: "Timeout in milliseconds (default 120000)." },
+      background: {
+        type: "boolean",
+        description:
+          "Start the command detached and return immediately instead of waiting for it. " +
+          "Use for dev servers, watchers, and opening applications or URLs.",
+      },
     },
     required: ["command"],
     additionalProperties: false,
@@ -54,6 +60,28 @@ export const shellTool: ImurunTool = {
 
     const { shell } = defaultShell()
     const finalArgs = shellInvocation(command).slice(1)
+
+    // Detached: hand the command to the OS and return at once. Nothing is
+    // captured, which is what makes it usable for servers and for opening apps.
+    if (args.background === true) {
+      try {
+        const proc = Bun.spawn([shell, ...finalArgs], {
+          cwd,
+          stdout: "ignore",
+          stderr: "ignore",
+          stdin: "ignore",
+          env: { ...process.env },
+          windowsHide: true,
+        })
+        proc.unref()
+        return ok(`Started in the background (pid ${proc.pid}); it keeps running after this call returns.`, {
+          title: `$ ${command.slice(0, 80)} (background)`,
+          data: { pid: proc.pid, background: true },
+        })
+      } catch (error) {
+        return fail(`Failed to start the command: ${(error as Error).message}`)
+      }
+    }
 
     try {
       const proc = Bun.spawn([shell, ...finalArgs], {

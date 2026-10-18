@@ -272,6 +272,10 @@ export class Agent {
     if (toolNames.has("code_search")) capabilities.push("search the whole project by meaning over an offline index that keeps itself up to date")
     if (toolNames.has("web_search")) capabilities.push("search the internet and read web pages (these fail cleanly when offline)")
     if (memoryOn) capabilities.push("store and recall durable memory across sessions")
+    if (toolNames.has("shell")) {
+      capabilities.push("open files, folders, applications and web links with the platform opener")
+      capabilities.push("start long-running commands (servers, watchers) in the background")
+    }
     if (toolNames.has("progress")) capabilities.push("keep a resumable record of work in progress, so a later run picks up where it stopped")
     if (toolNames.has("task")) capabilities.push("delegate focused work to a subagent with its own context window")
     if (skillLibrary.length > 0) capabilities.push(`apply any of ${skillLibrary.length} built-in skills automatically when one fits`)

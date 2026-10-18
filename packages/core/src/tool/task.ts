@@ -16,7 +16,9 @@ export function createTaskTool(runner: SubagentRunner): ImurunTool {
     description:
       "Delegate a focused sub-task to a subagent that works in its own context window and " +
       "returns a concise text report. Use it for broad exploration, research, or independent " +
-      "work so the main conversation stays uncluttered.",
+      "work so the main conversation stays uncluttered. The prompt must stand alone: state the " +
+      "goal, name the files or directories involved, give the rules to follow, and say what to " +
+      "return. The subagent cannot see this conversation.",
     parameters: {
       type: "object",
       properties: {

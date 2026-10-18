@@ -12,6 +12,21 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("progress tool")
   })
 
+  test("tells the model to search first and to verify before claiming success", () => {
+    const prompt = buildSystemPrompt({ workingDir: "C:/work" })
+    // search-first: never answer unknown/current things from memory
+    expect(prompt).toContain("web_search")
+    expect(prompt).toContain("never guess")
+    // verify the change landed, and retry differently if it did not
+    expect(prompt).toContain("Cross-check that every change actually landed")
+    expect(prompt).toContain("try a different way")
+    // keep the user informed of the things that matter
+    expect(prompt).toContain("Narrate the steps that matter")
+    // and it may open apps/links and run background commands
+    expect(prompt).toContain("xdg-open")
+    expect(prompt).toContain("background")
+  })
+
   test("includes the environment, and today's date", () => {
     const prompt = buildSystemPrompt({ workingDir: "C:/work/project", model: "qwen2.5-coder-7b", agent: "build" })
     expect(prompt).toContain("Project directory: C:/work/project")

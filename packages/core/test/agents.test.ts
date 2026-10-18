@@ -33,6 +33,16 @@ describe("agent definitions", () => {
     expect(isToolAllowed(plan, "write")).toBe(false)
     expect(isToolAllowed(plan, "shell")).toBe(false)
 
+    // read-only agents still get to look things up: code search and the web
+    const explore = getAgent(BUILTIN_AGENTS, "explore")!
+    expect(isToolAllowed(plan, "code_search")).toBe(true)
+    expect(isToolAllowed(plan, "web_search")).toBe(true)
+    expect(isToolAllowed(plan, "web_fetch")).toBe(true)
+    expect(isToolAllowed(explore, "web_search")).toBe(true)
+    expect(isToolAllowed(explore, "code_search")).toBe(true)
+    // the old name matched no registered tool, so it granted nothing
+    expect(ToolRegistry.default().get("rag_search")).toBeUndefined()
+
     const custom = { ...build, tools: ["read", "grep"], disabledTools: [] }
     expect(isToolAllowed(custom, "read")).toBe(true)
     expect(isToolAllowed(custom, "glob")).toBe(false)
