@@ -205,7 +205,7 @@ export interface FrameOptions {
   height: number
   /** Top bar (one line normally). */
   header: string[]
-  /** Left panel, drawn beside transcript/overlay. */
+  /** Session panel, drawn on the right of the transcript/overlay. */
   sidebar?: SidebarPanel
   /** Full transcript; the newest lines are shown. */
   transcript: string[]
@@ -245,7 +245,7 @@ export interface Frame {
  * Lays out one full-screen frame:
  *
  *   ┌ header ────────────────────────────────────────────────┐
- *   │ sidebar │ transcript (+ overlay at the bottom)          │
+ *   │ transcript (+ overlay at the bottom)          │ panel   │
  *   ├─────────────────────────────────────────────────────────┤
  *   │ prompt box                                              │
  *   │ status                                                  │
@@ -301,8 +301,10 @@ export function composeFrame(options: FrameOptions): Frame {
   for (let i = 0; i < bodyRows; i++) {
     const content = padVisible(clampVisible(body[i] ?? "", contentWidth), contentWidth)
     if (sidebarWidth > 0) {
-      const left = padVisible(clampVisible(options.sidebar!.lines[i] ?? "", sidebarWidth), sidebarWidth)
-      lines.push(padVisible(`${left}${theme.dim("\u2502")}${content}`, width))
+      // The panel sits on the right: the chat keeps the left edge, where the
+      // eye starts, and the vital signs stay out of the way of the prose.
+      const panel = padVisible(clampVisible(options.sidebar!.lines[i] ?? "", sidebarWidth), sidebarWidth)
+      lines.push(padVisible(`${content}${theme.dim("\u2502")}${panel}`, width))
     } else {
       lines.push(padVisible(content, width))
     }

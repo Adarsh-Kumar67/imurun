@@ -237,7 +237,7 @@ describe("composeFrame", () => {
     expect(frame.lines[frame.lines.length - 1]!.trim()).toBe("status")
   })
 
-  test("draws the sidebar to the left of the transcript", () => {
+  test("draws the sidebar to the right of the transcript", () => {
     const frame = composeFrame({
       ...base,
       width: 40,
@@ -246,10 +246,13 @@ describe("composeFrame", () => {
     })
     // the panel starts at the top of the body, not beside the last line
     const first = stripAnsi(frame.lines[1]!)
-    expect(first.startsWith("SIDE")).toBe(true)
+    expect(first.trimEnd().endsWith("SIDE")).toBe(true)
     expect(first).toContain("\u2502")
     expect(visibleWidth(frame.lines[1]!)).toBe(40)
-    // the transcript still reaches the body, just to the right of the panel
+    expect(stripAnsi(frame.lines[1]!).indexOf("\u2502")).toBeGreaterThan(20)
+    // the second panel line follows it down the right edge
+    expect(stripAnsi(frame.lines[2]!).trimEnd().endsWith("PANEL")).toBe(true)
+    // the transcript still gets the body, just to the left of the panel
     expect(frame.lines[9]).toContain("hello")
   })
 

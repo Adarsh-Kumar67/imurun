@@ -128,10 +128,15 @@ if (!frame.lines.some((line) => strip(line).includes("2235+140 tokens"))) proble
 if (!frame.lines.some((line) => strip(line).includes("\u25cb"))) problems.push("queued message marker missing")
 
 const metaLine = frame.lines.find((line) => strip(line).includes("2235+140 tokens")) ?? ""
-if (!strip(metaLine).trimEnd().endsWith("qwen2.5-coder-7b")) problems.push("stats line is not right-aligned")
-// the stats must sit on the right of the content column, not against the divider
-const metaContent = strip(metaLine).split("\u2502").slice(1).join("\u2502")
+// The stats sit at the right edge of the content column, which is now the left
+// half of the frame; the session panel occupies the right.
+const [metaContent = "", metaPanel = ""] = strip(metaLine).split("\u2502")
+if (!metaContent.trimEnd().endsWith("qwen2.5-coder-7b")) problems.push("stats line is not right-aligned")
 if (!/^\s{8,}/.test(metaContent)) problems.push("stats line is not pushed to the right of the content column")
+if (metaPanel.trim().length === 0) problems.push("the panel is empty beside the transcript")
+if ((strip(metaLine).match(/\u2502/g) ?? []).length !== 1) problems.push("content and panel are not separated by one divider")
+const contextLine = frame.lines.find((line) => strip(line).includes("CONTEXT")) ?? ""
+if (strip(contextLine).indexOf("CONTEXT") <= WIDTH / 2) problems.push("the panel is not on the right")
 
 if (problems.length === 0) {
   console.log("  \u2714 frame layout OK\n")

@@ -1,7 +1,8 @@
 /**
- * The left panel: the session's vital signs at a glance — how much context is
- * left, which agent and model are active, the working directory, the approval
- * mode, open todos, and anything queued behind the current turn.
+ * The side panel: the session's vital signs at a glance — how much context is
+ * left, which agent and model are active, the approval mode, the working
+ * directory, open todos, and anything queued behind the current turn. It is
+ * drawn on the right of the chat by the frame.
  *
  * Pure: `sidebarLines` takes a plain state object and returns lines already
  * fitted to the panel width, so the frame layout stays a simple concatenation.
