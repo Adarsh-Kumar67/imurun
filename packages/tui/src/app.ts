@@ -1164,6 +1164,15 @@ export class TuiApp {
         case "continuation":
           this.pushNotice(`output limit reached \u2014 asking the model to continue where it stopped`, "warn")
           break
+        case "verifying": {
+          const shown = event.files.slice(0, 3).join(", ")
+          const more = event.files.length > 3 ? ` +${event.files.length - 3} more` : ""
+          this.pushNotice(
+            `checking what changed before finishing \u2014 ${shown}${more}`,
+            "info",
+          )
+          break
+        }
         case "tool-start": {
           this.finalizeStreaming()
           const args = (typeof event.args === "object" && event.args !== null ? event.args : {}) as Record<string, unknown>

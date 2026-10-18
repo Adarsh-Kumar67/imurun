@@ -9,6 +9,15 @@ import type { ImurunTool } from "./types"
 import { fail, ok, requireString } from "./types"
 import { resolveToolPath } from "./read"
 
+/**
+ * The most content one call may send. Local models routinely try to emit a whole
+ * large file in a single call and are cut off by the output limit first — nothing
+ * reaches disk and the turn is wasted. Refusing the oversized call and saying what
+ * to do instead turns that dead end into a self-correcting loop.
+ */
+const MAX_WRITE_LINES = 80
+const MAX_WRITE_CHARS = 12_000
+
 export const writeTool: ImurunTool = {
   name: "write",
   description:
@@ -44,6 +53,19 @@ export const writeTool: ImurunTool = {
     const content = typeof args.content === "string" ? args.content : undefined
     if (content === undefined) return fail("Missing required string argument: content")
     const mode = args.mode === "append" || args.mode === "create" ? args.mode : "overwrite"
+
+    const incomingLines = content === "" ? 0 : content.split(/\r?\n/).length
+    if (incomingLines > MAX_WRITE_LINES || content.length > MAX_WRITE_CHARS) {
+      const advice =
+        mode === "append"
+          ? "Send a smaller append — around ten lines at a time."
+          : 'Send the first section now (mode "create" for a new file, "overwrite" to replace an existing ' +
+            'one), then add the remaining sections with mode "append", around ten lines at a time.'
+      return fail(
+        `Refused: one call may write at most ${MAX_WRITE_LINES} lines, and this one has ${incomingLines}. ` +
+          `Everything you send now would be cut off before it reached the file. ${advice}`,
+      )
+    }
 
     try {
       const existing = await stat(path).catch(() => undefined)

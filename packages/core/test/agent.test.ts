@@ -239,6 +239,7 @@ describe("agent loop", () => {
       sessionId: session.id,
       input: "create result.txt with a greeting",
       workingDir: h.workingDir,
+      verifyChanges: false,
       onEvent,
     })
 
@@ -541,6 +542,7 @@ describe("agent loop", () => {
       sessionId: session.id,
       input: "create leak.txt",
       workingDir: h.workingDir,
+      verifyChanges: false,
       onEvent,
     })
 
@@ -576,7 +578,13 @@ describe("agent loop", () => {
       onPermission: async () => true,
     })
 
-    await agent.run({ sessionId: session.id, input: "write fenced.txt", workingDir: h.workingDir, onEvent })
+    await agent.run({
+      sessionId: session.id,
+      input: "write fenced.txt",
+      workingDir: h.workingDir,
+      verifyChanges: false,
+      onEvent,
+    })
 
     expect(existsSync(join(h.workingDir, "fenced.txt"))).toBe(true)
     const resets = events.filter((event) => event.type === "text-reset")
@@ -610,6 +618,71 @@ describe("agent loop", () => {
     expect((notices[0] as { detail: string }).detail).toContain("teleport")
     expect(displayedText(events)).toBe("")
     expect(result.text).toBe("")
+    h.store.close()
+    server.close()
+  })
+
+  test("a turn that changed files asks for a check before it finishes", async () => {
+    const callJson = JSON.stringify({ name: "write", arguments: { path: "checked.txt", content: "x" } })
+    const server = startFakeServer([
+      textScript(callJson),
+      textScript("I created checked.txt."),
+      textScript("Verified: checked.txt now holds the value."),
+    ])
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      onPermission: async () => true,
+    })
+
+    const result = await agent.run({ sessionId: session.id, input: "make checked.txt", workingDir: h.workingDir, onEvent })
+
+    expect(existsSync(join(h.workingDir, "checked.txt"))).toBe(true)
+    // the check was asked for, and named the file that changed
+    const verifying = events.filter((event) => event.type === "verifying")
+    expect(verifying).toHaveLength(1)
+    expect((verifying[0] as { files: string[] }).files).toEqual(["checked.txt"])
+    // the model was told to confirm the change landed before answering
+    const lastRequest = server.requests.at(-1)!.messages as Array<Record<string, unknown>>
+    expect(JSON.stringify(lastRequest)).toContain("confirm that the changes you just made actually landed")
+    expect(result.steps).toBe(3)
+    expect(result.text).toContain("Verified")
+    h.store.close()
+    server.close()
+  })
+
+  test("no check is asked for when the model inspected the file itself", async () => {
+    const callJson = JSON.stringify({ name: "write", arguments: { path: "seen.txt", content: "y" } })
+    const server = startFakeServer([
+      textScript(callJson),
+      toolCallScript("call_2", "read", JSON.stringify({ path: "seen.txt" })),
+      textScript("Done: seen.txt holds y."),
+    ])
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      onPermission: async () => true,
+    })
+
+    const result = await agent.run({ sessionId: session.id, input: "make seen.txt", workingDir: h.workingDir, onEvent })
+
+    expect(events.some((event) => event.type === "verifying")).toBe(false)
+    expect(result.steps).toBe(3)
+    expect(result.text).toContain("Done")
     h.store.close()
     server.close()
   })

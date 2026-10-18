@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from "bun:test"
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createLogger } from "@imurun/util"
@@ -72,6 +72,23 @@ describe("write tool", () => {
   test("rejects missing content", async () => {
     const result = await writeTool.execute({ path: "x.txt" }, ctx)
     expect(result.ok).toBe(false)
+  })
+
+  test("refuses a single oversized write and says to append instead", async () => {
+    const huge = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n")
+    const result = await writeTool.execute({ path: "big.ts", content: huge, mode: "create" }, ctx)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("Refused")
+    expect(result.error).toContain("append")
+    // nothing was written, so the model can retry safely in pieces
+    expect(existsSync(join(dir, "big.ts"))).toBe(false)
+  })
+
+  test("a small write still goes through unchanged", async () => {
+    const small = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n")
+    const result = await writeTool.execute({ path: "small.ts", content: small, mode: "create" }, ctx)
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(dir, "small.ts"), "utf8")).toBe(small)
   })
 
   test("append adds to the end, inserting a newline when one is missing", async () => {

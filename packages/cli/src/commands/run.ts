@@ -188,6 +188,13 @@ export const runCommand: Command = {
             process.stderr.write(`\n  ${chalk.yellow("⚠")} the model asked for an unknown tool\n`)
           }
           break
+        case "verifying":
+          if (!quiet) {
+            process.stderr.write(
+              `\n  ${chalk.gray("·")} ${chalk.gray(`checking ${event.files.length} changed file(s)`)}\n`,
+            )
+          }
+          break
         case "tool-start":
           if (!quiet) {
             if (wroteText) process.stderr.write("\n")

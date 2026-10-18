@@ -51,6 +51,8 @@ export type AgentEvent =
   | { type: "compacted"; droppedMessages: number; keptMessages: number; reason: "budget" | "overflow" | "manual" }
   /** The answer hit the output limit; the run asked the model to carry on. */
   | { type: "continuation"; attempt: number }
+  /** Files changed this turn and none were inspected since; a check was asked for. */
+  | { type: "verifying"; files: string[] }
   | { type: "tool-start"; callId: string; name: string; args: unknown; title?: string }
   | { type: "tool-end"; callId: string; name: string; ok: boolean; output: string; title?: string }
   | { type: "permission"; request: PermissionRequest; allowed: boolean }
@@ -89,6 +91,11 @@ export interface RunOptions {
   contextWindow?: number
   /** Start from a deliberately tighter budget (after an explicit /compact). */
   tightContext?: boolean
+  /**
+   * Ask for one verification pass when a run changed files and nothing was
+   * inspected afterwards. On by default; one-shot utilities turn it off.
+   */
+  verifyChanges?: boolean
   onEvent?: (event: AgentEvent) => void
 }
 
@@ -126,6 +133,15 @@ const CONTINUE_PROMPT =
   "Continue from exactly where it stopped. Do not repeat anything you already wrote, do not restart the " +
   "answer, and do not add a preamble. If there is a lot left to produce, write it into files with small " +
   "write/append steps instead of one long message."
+
+/** How many verification passes a run may ask for before it must stop. */
+const MAX_VERIFICATIONS = 1
+
+const VERIFY_PROMPT =
+  "[system] Before you finish, confirm that the changes you just made actually landed: re-read the file you " +
+  "wrote or edited (or its tail), and if the project has a test, build or type check that covers it, run that. " +
+  "If something did not land, do not simply repeat the same attempt — work out why and fix it a different way. " +
+  "Then give your final answer: what changed, in which files, what you ran, and what the result was."
 
 function zeroUsage(): AgentUsage {
   return { inputTokens: 0, outputTokens: 0 }
@@ -356,6 +372,12 @@ export class Agent {
     let finalText = ""
     let steps = 0
     let continuations = 0
+    // Multistep discipline: remember what this turn changed and whether anything
+    // looked at it afterwards, so the agent checks its own work before finishing.
+    const verifyChanges = run.verifyChanges ?? true
+    const changedFiles = new Map<string, number>()
+    let lastInspectionStep = 0
+    let verifications = 0
 
     while (steps < maxSteps) {
       steps++
@@ -533,7 +555,21 @@ export class Agent {
         continue
       }
 
-      if (toolCalls.length === 0) break
+      if (toolCalls.length === 0) {
+        // The model is ready to answer. If this turn changed files and nothing
+        // has looked at them since, ask for one pass of checking before the
+        // answer stands — the difference between "I wrote it" and "it is there".
+        const lastChange = changedFiles.size > 0 ? Math.max(...changedFiles.values()) : 0
+        if (verifyChanges && lastChange > 0 && lastInspectionStep < lastChange && verifications < MAX_VERIFICATIONS) {
+          verifications++
+          const files = [...changedFiles.keys()]
+          run.onEvent?.({ type: "verifying", files })
+          sessions.addMessage({ sessionId: session.id, role: "user", content: VERIFY_PROMPT })
+          this.log.debug(`verifying ${files.length} changed file(s) before finishing`)
+          continue
+        }
+        break
+      }
 
       // execute tools sequentially so permission prompts and output stay ordered
       for (const call of toolCalls) {
@@ -599,6 +635,16 @@ export class Agent {
           output: result.output,
           title: result.title ?? title,
         })
+
+        // Remember what changed, and whether the model looked at it afterwards.
+        if (result.ok) {
+          if (call.name === "write" || call.name === "edit") {
+            const path = (result.data as { path?: string } | undefined)?.path
+            if (path) changedFiles.set(path, steps)
+          } else if (call.name === "read" || call.name === "shell") {
+            lastInspectionStep = steps
+          }
+        }
 
         this.log.debug(`tool ${call.name} ${result.ok ? "ok" : "failed"}`)
       }
