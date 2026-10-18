@@ -43,6 +43,9 @@ import {
   restrictToolRegistry,
   subagents,
   syncSkillPack,
+  todoCounts,
+  todoGlyph,
+  todoStoreFor,
 } from "@imurun/core"
 import type {
   AgentEvent,
@@ -52,6 +55,7 @@ import type {
   SubagentRequest,
   SubagentResult,
   SubagentRunner,
+  Todo,
 } from "@imurun/core"
 import { formatHits } from "@imurun/core"
 import {
@@ -86,7 +90,7 @@ import { estimateToolMs, progressPhrase, progressWords } from "./progress"
 import { MessageQueue, formatQueue } from "./queue"
 import { composeFrame, renderTranscript, type Block, type Tone } from "./render"
 import { Screen } from "./screen"
-import { sidebarLines, type SidebarState } from "./sidebar"
+import { sidebarLines, type SidebarState, type SidebarTodo } from "./sidebar"
 import { parseSlash, type ParsedSlash, type SlashRegistry } from "./slash"
 import { firstLine, fitVisible, padVisible, visibleWidth } from "./text"
 import { sym, theme } from "./theme"
@@ -273,7 +277,9 @@ export class TuiApp {
   private agentSwitch?: { from: string; to: string; startedAt: number }
   private contextUsed = 0
   private contextMax = 32768
-  private todos: string[] = []
+  private todos: SidebarTodo[] = []
+  /** The plan as stored, so /todo can act on it by number. */
+  private todoItems: Todo[] = []
   private transcriptLineCount = 0
 
   // ── session state ──
@@ -1253,6 +1259,8 @@ export class TuiApp {
             const preview = writtenCode(event.name, args)
             if (preview) this.pushBlock(preview)
           }
+          // A plan change should appear in the panel immediately, not at the end.
+          if (event.name === "todo") void this.refreshTodos().then(() => this.scheduleRender())
           this.scheduleRender()
           break
         }
@@ -3031,7 +3039,7 @@ export class TuiApp {
         chars += typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length
       }
       this.contextUsed = Math.round(chars / 4)
-      this.todos = (await this.memory.openTodos(this.workingDir)).slice(0, 8)
+      await this.refreshTodos()
       const status = await this.runtime.status().catch(() => undefined)
       const runtimeContext = status?.running ? status.state?.contextSize : undefined
       if (runtimeContext && runtimeContext > 0) this.contextMax = runtimeContext
@@ -3039,6 +3047,127 @@ export class TuiApp {
       /* the sidebar is cosmetic — never let it break a turn */
     }
     this.scheduleRender()
+  }
+
+  /**
+   * Reads the plan for the panel. An explicit todo list wins; when there is
+   * none, the todos remembered from earlier sessions are shown instead, so the
+   * panel is never misleading about outstanding work.
+   */
+  private async refreshTodos(): Promise<void> {
+    const items = await todoStoreFor(this.workingDir).list()
+    if (items.length > 0) {
+      this.todoItems = items
+      this.todos = items.map((todo) => ({ title: todo.title, status: todo.status }))
+      return
+    }
+    this.todoItems = []
+    this.todos = (await this.memory.openTodos(this.workingDir))
+      .slice(0, 8)
+      .map((title) => ({ title, status: "open" as const }))
+  }
+
+  // ── Todos ─────────────────────────────────────────────────────────────────
+
+  /** `/todo` — the plan the model and the user share, with tick marks. */
+  async todoCommand(args: string[]): Promise<void> {
+    const [action = "", ...rest] = args
+    const value = rest.join(" ").trim()
+    const store = todoStoreFor(this.workingDir)
+
+    if (!action || action === "list" || action === "ls") {
+      const items = await store.list()
+      this.print()
+      if (items.length === 0) {
+        this.print(
+          theme.dim("  no todos yet \u2014 /todo add <step>, or ask for a plan and the model writes one down"),
+        )
+        this.print()
+        return
+      }
+      const counts = todoCounts(items)
+      this.print(`  ${theme.bold("Plan")} ${theme.dim(`${counts.done}/${counts.total} done`)}`)
+      items.forEach((todo, index) => {
+        const glyph = todoGlyph(todo.status)
+        const mark =
+          todo.status === "done" ? theme.ok(glyph) : todo.status === "doing" ? theme.accent(glyph) : theme.warn(glyph)
+        const text = todo.status === "done" ? theme.dim(todo.title) : todo.title
+        this.print(`  ${theme.accent(String(index + 1).padStart(2))}. ${mark} ${text}`)
+      })
+      this.print(
+        theme.dim(
+          "  /todo add <step> \u00b7 /todo start <n> \u00b7 /todo done <n> \u00b7 /todo reopen <n> \u00b7 /todo rm <n> \u00b7 /todo clear-done",
+        ),
+      )
+      this.print()
+      return
+    }
+
+    if (action === "add" || action === "a") {
+      if (!value) {
+        this.printError("usage: /todo add <step>")
+        return
+      }
+      const todo = await store.add({ title: value, sessionId: this.session.id })
+      this.pushNotice(`${todoGlyph(todo.status)} added \u00b7 ${todo.title}`, "ok")
+      await this.refreshTodos()
+      return
+    }
+
+    if (action === "done" || action === "start" || action === "doing" || action === "reopen") {
+      if (!value) {
+        this.printError(`usage: /todo ${action} <number|text>`)
+        return
+      }
+      const status = action === "done" ? "done" : action === "reopen" ? "open" : "doing"
+      const todo = await store.setStatus(value, status)
+      if (!todo) {
+        this.printError(`no todo matches "${value}" \u2014 /todo lists them`)
+        return
+      }
+      this.pushNotice(`${todoGlyph(todo.status)} ${todo.title} \u2014 ${todo.status}`, "ok")
+      await this.refreshTodos()
+      return
+    }
+
+    if (action === "remove" || action === "rm" || action === "delete") {
+      if (!value) {
+        this.printError("usage: /todo rm <number|text>")
+        return
+      }
+      if (!(await store.remove(value))) {
+        this.printError(`no todo matches "${value}" \u2014 /todo lists them`)
+        return
+      }
+      this.pushNotice(`removed "${value}" from the plan`, "ok")
+      await this.refreshTodos()
+      return
+    }
+
+    if (action === "clear-done" || action === "prune") {
+      const removed = await store.clearDone()
+      this.pushNotice(removed === 0 ? "nothing to clear" : `cleared ${removed} finished todo(s)`, "ok")
+      await this.refreshTodos()
+      return
+    }
+
+    if (action === "clear" || action === "reset") {
+      const answer = (await this.confirm("clear the whole plan?", "[y/N]")).toLowerCase()
+      if (answer !== "y") {
+        this.print(theme.dim("  kept"))
+        return
+      }
+      const count = await store.clear()
+      this.pushNotice(`cleared ${count} todo(s)`, "ok")
+      await this.refreshTodos()
+      return
+    }
+
+    // A bare /todo <text> adds that step.
+    const title = [action, ...rest].join(" ").trim()
+    const todo = await store.add({ title, sessionId: this.session.id })
+    this.pushNotice(`${todoGlyph(todo.status)} added \u00b7 ${todo.title}`, "ok")
+    await this.refreshTodos()
   }
 
   private headerLines(width: number): string[] {

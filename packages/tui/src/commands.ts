@@ -72,6 +72,15 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "todo",
+    aliases: ["todos", "plan"],
+    summary: "Show or edit the plan the model is working through",
+    usage: "/todo [list | add <step> | start <n> | done <n> | reopen <n> | rm <n> | clear-done]",
+    run(app, args) {
+      return app.todoCommand(args)
+    },
+  },
+  {
     name: "clear",
     summary: "Clear the screen",
     run(app) {

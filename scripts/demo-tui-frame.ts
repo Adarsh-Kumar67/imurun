@@ -81,7 +81,11 @@ const sidebar = sidebarLines({
   workingDir: "C:/Users/imu/Desktop/ImuTechz/IMU CLI",
   permissions: "manual",
   context: { used: 13_700, max: 32_768 },
-  todos: ["queue draining after interrupt", "write the README", "publish 0.1.0"],
+  todos: [
+    { title: "queue draining after interrupt", status: "doing" },
+    { title: "write the README", status: "open" },
+    { title: "publish 0.1.0", status: "open" },
+  ],
   queue: 2,
   busy: true,
 })

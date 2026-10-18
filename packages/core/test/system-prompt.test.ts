@@ -81,7 +81,8 @@ describe("buildSystemPrompt", () => {
 
   test("a compacted summary replaces the carried-over todos", () => {
     const withTodos = buildSystemPrompt({ workingDir: "C:/work", todos: ["finish the parser"] })
-    expect(withTodos).toContain("Open todos carried over")
+    expect(withTodos).toContain("The current plan")
+    expect(withTodos).toContain("finish the parser")
 
     const compacted = buildSystemPrompt({
       workingDir: "C:/work",
@@ -90,7 +91,7 @@ describe("buildSystemPrompt", () => {
     })
     expect(compacted).toContain("Earlier in this session")
     expect(compacted).toContain("We finished the parser")
-    expect(compacted).not.toContain("Open todos carried over")
+    expect(compacted).not.toContain("The current plan")
   })
 
   test("work in progress is labelled as resumable state", () => {

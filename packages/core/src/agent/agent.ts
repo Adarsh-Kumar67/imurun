@@ -31,6 +31,7 @@ import {
 import type { MemoryStore } from "../memory/store"
 import { digestToPrompt, messageText } from "../memory/summarize"
 import { formatLedger, ledgerFor } from "../memory/ledger"
+import { todoPromptLines } from "../tool/todo"
 import { formatHit } from "../memory/search"
 import { selectSkills, skillsToPromptSection } from "./skills"
 import type { SkillDefinition } from "./skills"
@@ -249,6 +250,15 @@ export class Agent {
       this.log.debug(`progress ledger skipped: ${errorMessage(error)}`)
     }
 
+    // The plan the user can watch. A fresh session should pick up the steps that
+    // are still open rather than start the work over.
+    let planned: string[] = []
+    try {
+      planned = await todoPromptLines(run.workingDir)
+    } catch (error) {
+      this.log.debug(`todo list skipped: ${errorMessage(error)}`)
+    }
+
     if (memory && memoryOn) {
       try {
         const query = typeof run.input === "string" ? run.input : run.input.map((p) => (p.type === "text" ? p.text : "")).join(" ")
@@ -316,7 +326,7 @@ export class Agent {
         instructions: config.instructions,
         memories,
         notes: durableNotes,
-        todos: summary ? [] : todos,
+        todos: summary ? [] : [...planned, ...todos],
         compactedSummary: summary,
         extraSections: [...(run.extraSystemSections ?? []), ...skillSections],
         inProgress,

@@ -10,7 +10,10 @@ const state: SidebarState = {
   workingDir: "C:/Users/imu/Desktop/ImuTechz/IMU CLI",
   permissions: "manual",
   context: { used: 13_700, max: 32_768 },
-  todos: ["finish the sidebar", "write the README"],
+  todos: [
+    { title: "finish the sidebar", status: "doing" },
+    { title: "write the README", status: "open" },
+  ],
   queue: 2,
   busy: true,
 }
@@ -64,7 +67,7 @@ describe("sidebarLines", () => {
     expect(plain).toContain("manual")
     expect(plain).toContain("DIRECTORY")
     expect(plain).toContain("SESSION")
-    expect(plain).toContain("TODOS  2")
+    expect(plain).toContain("TODOS  0/2")
     expect(plain).toContain("finish the sidebar")
     expect(plain).toContain("QUEUED  2")
   })
@@ -79,6 +82,45 @@ describe("sidebarLines", () => {
     const plain = sidebarLines({ ...state, model: undefined, context: undefined }).map(stripAnsi).join("\n")
     expect(plain).toContain("none")
     expect(plain).toContain("not loaded")
+  })
+
+  test("todos show a tick, a half tick, or an empty box", () => {
+    const plain = sidebarLines({
+      ...state,
+      todos: [
+        { title: "finished", status: "done" },
+        { title: "in flight", status: "doing" },
+        { title: "not started", status: "open" },
+      ],
+    })
+      .map(stripAnsi)
+      .join("\n")
+    expect(plain).toContain("\u2611 finished")
+    expect(plain).toContain("\u25d0 in flight")
+    expect(plain).toContain("\u2610 not started")
+    expect(plain).toContain("TODOS  1/3")
+  })
+
+  test("work in progress is listed above what has not started, and done goes last", () => {
+    const lines = sidebarLines({
+      ...state,
+      todos: [
+        { title: "done one", status: "done" },
+        { title: "later", status: "open" },
+        { title: "now", status: "doing" },
+      ],
+    }).map(stripAnsi)
+    const order = lines.filter((line) => /done one|later|now/.test(line))
+    expect(order[0]).toContain("now")
+    expect(order[1]).toContain("later")
+    expect(order[2]).toContain("done one")
+  })
+
+  test("a long plan is summarised, not truncated mid-list", () => {
+    const todos = Array.from({ length: 9 }, (_, index) => ({ title: `step ${index}`, status: "open" as const }))
+    const plain = sidebarLines({ ...state, todos }).map(stripAnsi).join("\n")
+    expect(plain).toContain("TODOS  0/9")
+    expect(plain).toContain("+3 more")
   })
 })
 

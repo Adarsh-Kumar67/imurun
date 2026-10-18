@@ -10,6 +10,11 @@
 import { theme } from "./theme"
 import { padVisible, truncateVisible } from "./text"
 
+export interface SidebarTodo {
+  title: string
+  status: "open" | "doing" | "done"
+}
+
 export interface SidebarState {
   /** Panel width in columns (content only — the frame draws the divider). */
   width: number
@@ -20,10 +25,19 @@ export interface SidebarState {
   permissions: string
   /** Estimated context usage for the active session. */
   context?: { used: number; max: number }
-  todos: string[]
+  /** The plan, in the order it should be shown. */
+  todos: SidebarTodo[]
   /** Number of messages waiting behind the current turn. */
   queue: number
   busy: boolean
+}
+
+const TODO_GLYPH: Record<SidebarTodo["status"], string> = { open: "\u2610", doing: "\u25d0", done: "\u2611" }
+
+/** Checklists read top-down: work in progress, then what is left, then done. */
+function orderTodos(todos: SidebarTodo[]): SidebarTodo[] {
+  const rank = (todo: SidebarTodo): number => (todo.status === "done" ? 2 : todo.status === "doing" ? 0 : 1)
+  return [...todos].sort((a, b) => rank(a) - rank(b))
 }
 
 /** Compact token count: 32768 → "32.8k". */
@@ -112,12 +126,22 @@ export function sidebarLines(state: SidebarState): string[] {
   lines.push(value(theme.muted(state.session), width))
 
   if (state.todos.length > 0) {
+    const ordered = orderTodos(state.todos)
+    const done = ordered.filter((todo) => todo.status === "done").length
     lines.push(blank(width))
-    lines.push(title(`todos  ${state.todos.length}`, width))
-    for (const todo of state.todos.slice(0, 6)) {
-      lines.push(padVisible(` ${theme.warn("\u25cf")} ${theme.dim(truncateVisible(todo, inner - 3))}`, width))
+    lines.push(title(`todos  ${done}/${ordered.length}`, width))
+    for (const todo of ordered.slice(0, 6)) {
+      const glyph =
+        todo.status === "done"
+          ? theme.ok(TODO_GLYPH[todo.status])
+          : todo.status === "doing"
+            ? theme.accent(TODO_GLYPH[todo.status])
+            : theme.warn(TODO_GLYPH[todo.status])
+      const text =
+        todo.status === "done" ? theme.dim(truncateVisible(todo.title, inner - 3)) : truncateVisible(todo.title, inner - 3)
+      lines.push(padVisible(` ${glyph} ${text}`, width))
     }
-    if (state.todos.length > 6) lines.push(value(theme.dim(`+${state.todos.length - 6} more`), width))
+    if (ordered.length > 6) lines.push(value(theme.dim(`+${ordered.length - 6} more`), width))
   }
 
   if (state.queue > 0) {

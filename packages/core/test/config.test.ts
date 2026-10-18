@@ -18,19 +18,23 @@ function setupWorkspace() {
 
 describe("config discovery", () => {
   test("finds global and ancestor project configs", async () => {
-    const { project, nested } = setupWorkspace()
+    const { root, project, nested } = setupWorkspace()
     writeFileSync(join(process.env.IMURUN_HOME!, "imurun.json"), JSON.stringify({ model: "global-model" }))
     writeFileSync(join(project, "imurun.json"), JSON.stringify({ model: "project-model" }))
 
     const found = await discoverConfigs(nested)
-    expect(found.length).toBe(2)
-    expect(found[0]!.scope).toBe("global")
-    expect(found[1]!.scope).toBe("project")
-    expect(found[1]!.path).toContain("project")
+    // Ancestors outside the workspace (the real home directory, for instance)
+    // may legitimately carry their own config, so scope the assertion to this
+    // workspace's files.
+    const ours = found.filter((entry) => entry.path.startsWith(root))
+    expect(ours.length).toBe(2)
+    expect(ours[0]!.scope).toBe("global")
+    expect(ours[1]!.scope).toBe("project")
+    expect(ours[1]!.path).toContain("project")
   })
 
   test("supports .imurun directory configs and jsonc comments", async () => {
-    const { project, nested } = setupWorkspace()
+    const { root, project, nested } = setupWorkspace()
     mkdirSync(join(project, ".imurun"), { recursive: true })
     writeFileSync(
       join(project, ".imurun", "imurun.jsonc"),
@@ -44,7 +48,8 @@ describe("config discovery", () => {
     const { config, sources } = await loadConfig(nested)
     expect(config.model).toBe("jsonc-model")
     expect(config.rag.watch).toBe(false)
-    expect(sources).toHaveLength(1)
+    // Only this workspace's file is under test; other ancestors may contribute.
+    expect(sources.filter((source) => source.startsWith(root))).toHaveLength(1)
   })
 })
 

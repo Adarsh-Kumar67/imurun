@@ -148,7 +148,10 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
   }
 
   if (ctx.todos && ctx.todos.length > 0) {
-    sections.push(`Open todos carried over:\n${bullets(ctx.todos)}`)
+    sections.push(
+      "The current plan (the same list the user sees; tick each step off with the todo tool as soon as it is " +
+        `really finished, and re-plan with action=plan when it changes):\n${bullets(ctx.todos)}`,
+    )
   }
 
   if (ctx.compactedSummary) {
