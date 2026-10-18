@@ -3108,7 +3108,7 @@ export class TuiApp {
         this.printError("usage: /todo add <step>")
         return
       }
-      const todo = await store.add({ title: value, sessionId: this.session.id })
+      const todo = await store.add({ title: value })
       this.pushNotice(`${todoGlyph(todo.status)} added \u00b7 ${todo.title}`, "ok")
       await this.refreshTodos()
       return
@@ -3165,7 +3165,7 @@ export class TuiApp {
 
     // A bare /todo <text> adds that step.
     const title = [action, ...rest].join(" ").trim()
-    const todo = await store.add({ title, sessionId: this.session.id })
+    const todo = await store.add({ title })
     this.pushNotice(`${todoGlyph(todo.status)} added \u00b7 ${todo.title}`, "ok")
     await this.refreshTodos()
   }

@@ -1,41 +1,83 @@
 /**
  * Todos — the plan the model writes down and the user watches get ticked off.
+ * The markdown file in the project is the source of truth, so these tests read
+ * it back directly.
  */
-import { afterAll, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { beforeEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { TodoStore, formatTodos, todoCounts, todoGlyph, todoStoreFor } from "../src/todo/store"
+import {
+  TodoStore,
+  formatTodos,
+  parseTodos,
+  renderTodos,
+  todoCounts,
+  todoGlyph,
+  todoIdFor,
+  todoPath,
+  todoStoreFor,
+} from "../src/todo/store"
 import { todoTool } from "../src/tool/todo"
 import type { ToolContext } from "../src/tool/types"
 
-const originalHome = process.env.IMURUN_HOME
-const project = "C:/work/example"
-
-function scratchHome(label: string): void {
-  process.env.IMURUN_HOME = mkdtempSync(join(tmpdir(), `imurun-todos-${label}-`))
-}
+let project: string
 
 beforeEach(() => {
-  scratchHome("case")
-})
-
-afterAll(() => {
-  if (originalHome === undefined) delete process.env.IMURUN_HOME
-  else process.env.IMURUN_HOME = originalHome
+  project = mkdtempSync(join(tmpdir(), "imurun-todos-"))
 })
 
 function toolContext(): ToolContext {
   return {
     workingDir: project,
     sessionId: "ses_test",
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    log: { debug() {}, info() {}, warn() {}, error() {}, child: () => undefined as never } as never,
+    log: { debug() {}, info() {}, warn() {}, error() {} } as never,
   } as ToolContext
 }
 
+describe("the todos file", () => {
+  test("round-trips steps, order and detail", () => {
+    const markdown = renderTodos([
+      { id: "a", title: "one", status: "done", position: 0 },
+      { id: "b", title: "two", status: "doing", position: 1, detail: "keep it small" },
+      { id: "c", title: "three", status: "open", position: 2 },
+    ])
+    const back = parseTodos(markdown)
+    expect(back.map((todo) => [todo.title, todo.status])).toEqual([
+      ["one", "done"],
+      ["two", "doing"],
+      ["three", "open"],
+    ])
+    expect(back[1]!.detail).toBe("keep it small")
+  })
+
+  test("reads the checkbox conventions, including hand-edited ones", () => {
+    const parsed = parseTodos(
+      [
+        "# my plan",
+        "- [ ] open one",
+        "* [x] done one",
+        "- [/] in progress",
+        "- [~] also in progress",
+        "not a step at all",
+        "1. [ ] numbered",
+      ].join("\n"),
+    )
+    expect(parsed.map((todo) => todo.status)).toEqual(["open", "done", "doing", "doing", "open"])
+  })
+
+  test("an id follows the title, so nothing has to be stored", () => {
+    expect(todoIdFor("Write the README")).toBe(todoIdFor("write  the readme"))
+    expect(todoIdFor("a")).not.toBe(todoIdFor("b"))
+  })
+
+  test("lives at .imurun/todos.md inside the project", () => {
+    expect(todoPath("C:/work/app").replace(/\\/g, "/")).toBe("C:/work/app/.imurun/todos.md")
+  })
+})
+
 describe("TodoStore", () => {
-  test("adds steps in order and remembers them across instances", async () => {
+  test("adds steps in order and writes them to the file", async () => {
     const store = new TodoStore(project)
     await store.add({ title: "read the parser" })
     await store.add({ title: "  write   the tests " })
@@ -44,6 +86,10 @@ describe("TodoStore", () => {
     const todos = await fresh.list()
     expect(todos.map((todo) => todo.title)).toEqual(["read the parser", "write the tests"])
     expect(todos.every((todo) => todo.status === "open")).toBe(true)
+
+    const onDisk = readFileSync(todoPath(project), "utf8")
+    expect(onDisk).toContain("- [ ] read the parser")
+    expect(onDisk).toContain("- [ ] write the tests")
   })
 
   test("a repeated title updates the step instead of duplicating it", async () => {
@@ -68,13 +114,11 @@ describe("TodoStore", () => {
     expect(next.map((todo) => todo.title)).toEqual(["two", "three"])
     expect(next[0]!.id).toBe(b!.id)
     expect(next[0]!.status).toBe("done")
-    expect(next[0]!.completedAt).toBeDefined()
     expect(next[1]!.id).not.toBe(a!.id)
   })
 
-  test("write accepts plain strings and ignores blanks", async () => {
-    const store = new TodoStore(project)
-    const next = await store.write([{ title: "keep" }, { title: "  " }])
+  test("write ignores blank titles", async () => {
+    const next = await new TodoStore(project).write([{ title: "keep" }, { title: "  " }])
     expect(next).toHaveLength(1)
   })
 
@@ -92,17 +136,25 @@ describe("TodoStore", () => {
     expect(await store.resolve("99")).toBeUndefined()
   })
 
-  test("ticking a step records when it was finished", async () => {
+  test("ticking a step survives a reload", async () => {
     const store = new TodoStore(project)
     await store.add({ title: "ship it" })
 
-    const done = await store.setStatus("ship it", "done")
-    expect(done?.status).toBe("done")
-    expect(done?.completedAt).toBeGreaterThan(0)
+    expect((await store.setStatus("ship it", "done"))?.status).toBe("done")
+    expect((await new TodoStore(project).list())[0]!.status).toBe("done")
+    expect(readFileSync(todoPath(project), "utf8")).toContain("- [x] ship it")
 
-    const reopened = await store.setStatus("ship it", "open")
-    expect(reopened?.status).toBe("open")
-    expect(reopened?.completedAt).toBeUndefined()
+    expect((await store.setStatus("ship it", "open"))?.status).toBe("open")
+    expect(readFileSync(todoPath(project), "utf8")).toContain("- [ ] ship it")
+  })
+
+  test("a hand-edited file is picked up", async () => {
+    await new TodoStore(project).add({ title: "one" })
+    const path = todoPath(project)
+    writeFileSync(path, `${readFileSync(path, "utf8")}- [x] done by hand\n`)
+
+    const todos = await new TodoStore(project).list()
+    expect(todos.map((todo) => todo.status)).toEqual(["open", "done"])
   })
 
   test("open() lists only unfinished work, in order", async () => {
@@ -128,17 +180,22 @@ describe("TodoStore", () => {
     expect(await store.list()).toHaveLength(0)
   })
 
+  test("an empty list is still a valid file", async () => {
+    const store = new TodoStore(project)
+    expect(await store.list()).toHaveLength(0)
+    expect(await store.counts()).toEqual({ open: 0, doing: 0, done: 0, total: 0 })
+    expect(await store.open()).toHaveLength(0)
+  })
+
   test("keeps the same store object per project", () => {
-    expect(todoStoreFor(project)).toBe(todoStoreFor("C:/WORK/EXAMPLE"))
+    expect(todoStoreFor(project)).toBe(todoStoreFor(project.toUpperCase()))
   })
 
   test("renders glyphs for each state", () => {
     expect(todoGlyph("open")).toBe("\u2610")
     expect(todoGlyph("doing")).toBe("\u25d0")
     expect(todoGlyph("done")).toBe("\u2611")
-    expect(formatTodos([{ id: "x", title: "ship", status: "done", position: 0, createdAt: 0, updatedAt: 0 }])).toEqual([
-      "\u2611 ship",
-    ])
+    expect(formatTodos([{ id: "x", title: "ship", status: "done", position: 0 }])).toEqual(["\u2611 ship"])
   })
 })
 
@@ -152,6 +209,7 @@ describe("todo tool", () => {
     expect(result.output).toContain("2 steps")
     expect(result.output).toContain("\u2610 read the parser")
     expect(result.output).toContain("\u25d0 write tests")
+    expect(readFileSync(todoPath(project), "utf8")).toContain("- [/] write tests")
   })
 
   test("an empty plan is refused", async () => {

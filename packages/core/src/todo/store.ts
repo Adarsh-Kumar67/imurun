@@ -8,16 +8,26 @@
  * list the whole time — so "what is it doing" and "how far along is it" are
  * answered by looking, not by reading the transcript.
  *
- * Stored per project as plain JSON, next to the rest of memory, so the list
- * survives restarts, is readable (and editable) by hand, and a later session
- * can pick up the unfinished steps.
+ * The list lives in the project, as plain markdown at `.imurun/todos.md`:
+ *
+ *     # Todos
+ *
+ *     - [x] read the parser
+ *     - [/] write the tests
+ *     - [ ] publish 0.1.0
+ *
+ * That file is the source of truth. It is readable and editable by hand, it
+ * diffs in git, it survives a wiped `~/.imurun`, and a later session picks up
+ * the unfinished steps from it. `[ ]` is open, `[/]` in progress, `[x]` done
+ * (the Obsidian Tasks convention). An indented line under a step is its detail.
  */
 import { join } from "node:path"
-import { ensureDir, imurunDir, readJson, shortHash, writeJsonAtomic } from "@imurun/util"
+import { readText, shortHash, writeFileAtomic } from "@imurun/util"
 
 export type TodoStatus = "open" | "doing" | "done"
 
 export interface Todo {
+  /** Stable across restarts: derived from the title, so nothing has to be stored. */
   id: string
   /** One line: the step, in the imperative. */
   title: string
@@ -26,44 +36,33 @@ export interface Todo {
   status: TodoStatus
   /** Order in the list; lower comes first. */
   position: number
-  /** Session that created it, when known. */
-  sessionId?: string
-  /** Agent that created it, when known. */
-  agentId?: string
-  createdAt: number
-  updatedAt: number
-  completedAt?: number
 }
 
 /** A list longer than this is a plan nobody is following. */
 const MAX_TODOS = 100
-/** Rows handed to the model in the system prompt. */
+/** Steps handed to the model in the system prompt. */
 export const TODO_PROMPT_LIMIT = 20
 
-interface TodoFile {
-  version: 1
-  projectPath: string
-  updatedAt: number
-  todos: Todo[]
-}
-
-const OPEN_STATUSES: TodoStatus[] = ["open", "doing"]
-
-export function todoDir(): string {
-  return imurunDir("memory", "todos")
-}
-
-export function todoPath(projectPath: string): string {
-  return join(todoDir(), `${shortHash(projectPath.toLowerCase(), 10)}.json`)
-}
-
 const STATUS_GLYPH: Record<TodoStatus, string> = { open: "\u2610", doing: "\u25d0", done: "\u2611" }
+/** The checkbox written for each state. `[/]` is the in-progress convention. */
+const STATUS_BOX: Record<TodoStatus, string> = { open: " ", doing: "/", done: "x" }
+const BOX_STATUS: Record<string, TodoStatus> = {
+  " ": "open",
+  "": "open",
+  x: "done",
+  X: "done",
+  "/": "doing",
+  "~": "doing",
+  "-": "doing",
+}
+
+const CONVENTION_LINE = "_IMURUN keeps this list in sync with the session. `[x]` done, `[/]` in progress._"
 
 export function todoGlyph(status: TodoStatus): string {
   return STATUS_GLYPH[status]
 }
 
-/** "1/3 done" style counts for a list. */
+/** "done/total" style counts for a list. */
 export function todoCounts(todos: Todo[]): { open: number; doing: number; done: number; total: number } {
   return {
     open: todos.filter((todo) => todo.status === "open").length,
@@ -77,17 +76,65 @@ function normalise(title: string): string {
   return title.replace(/\s+/g, " ").trim().toLowerCase()
 }
 
-/** A short, stable, readable id. */
-function todoId(): string {
-  return `td_${Math.random().toString(36).slice(2, 10)}`
+/** Derived, so the markdown file needs no ids of its own. */
+export function todoIdFor(title: string): string {
+  return `td_${shortHash(normalise(title), 8)}`
+}
+
+export function todoPath(projectPath: string): string {
+  return join(projectPath, ".imurun", "todos.md")
+}
+
+/** Where the plan lives, for callers that want to show or open the file. */
+export function todoFile(projectPath: string): string {
+  return todoPath(projectPath)
+}
+
+const STEP = /^\s*(?:[-*+]|\d+[.)])\s*\[(.)\]\s*(.*)$/
+
+/** Reads a todos.md into steps. Anything that is not a step is ignored. */
+export function parseTodos(markdown: string): Todo[] {
+  const todos: Todo[] = []
+  let current: Todo | undefined
+
+  for (const raw of markdown.split(/\r?\n/)) {
+    const match = STEP.exec(raw)
+    if (match) {
+      const title = match[2]!.trim()
+      if (!title) continue
+      current = {
+        id: todoIdFor(title),
+        title,
+        status: BOX_STATUS[match[1]!] ?? "open",
+        position: todos.length,
+      }
+      todos.push(current)
+      continue
+    }
+    // An indented line under a step is that step's detail.
+    if (current && /^\s+\S/.test(raw) && !raw.trim().startsWith("#")) {
+      const detail = raw.trim()
+      current.detail = current.detail ? `${current.detail} ${detail}` : detail
+    }
+  }
+
+  return todos.slice(0, MAX_TODOS)
+}
+
+/** Renders steps back to markdown, preserving order and detail. */
+export function renderTodos(todos: Todo[]): string {
+  const lines = ["# Todos", "", CONVENTION_LINE, ""]
+  for (const todo of todos) {
+    lines.push(`- [${STATUS_BOX[todo.status]}] ${todo.title.replace(/\s+/g, " ").trim()}`)
+    if (todo.detail) lines.push(`  ${todo.detail.replace(/\s+/g, " ").trim()}`)
+  }
+  return `${lines.join("\n")}\n`
 }
 
 export interface AddTodoInput {
   title: string
   detail?: string
   status?: TodoStatus
-  sessionId?: string
-  agentId?: string
 }
 
 /** One item in a whole-list write, as the model sends it. */
@@ -100,54 +147,43 @@ export interface TodoInput {
 export class TodoStore {
   constructor(readonly projectPath: string) {}
 
-  private async load(): Promise<TodoFile> {
-    const data = await readJson<TodoFile>(todoPath(this.projectPath))
-    if (!data || !Array.isArray(data.todos)) {
-      return { version: 1, projectPath: this.projectPath, updatedAt: Date.now(), todos: [] }
+  private async load(): Promise<Todo[]> {
+    let raw: string
+    try {
+      raw = await readText(todoPath(this.projectPath))
+    } catch {
+      return []
     }
-    return {
-      version: 1,
-      projectPath: this.projectPath,
-      updatedAt: data.updatedAt ?? 0,
-      todos: data.todos.map((todo, index) => ({
-        ...todo,
-        status: STATUS_GLYPH[todo.status] ? todo.status : "open",
-        position: typeof todo.position === "number" ? todo.position : index,
-      })),
-    }
+    return parseTodos(raw)
   }
 
-  private async save(file: TodoFile): Promise<void> {
-    await ensureDir(todoDir())
-    // Unfinished work stays; finished work is trimmed first when the cap is hit.
-    const ordered = [...file.todos].sort((a, b) => {
+  private async save(todos: Todo[]): Promise<void> {
+    // Unfinished work is what matters; finished work is trimmed first.
+    const ordered = [...todos].sort((a, b) => {
       const doneA = a.status === "done" ? 1 : 0
       const doneB = b.status === "done" ? 1 : 0
       return doneA - doneB || a.position - b.position
     })
     const kept = ordered.slice(0, MAX_TODOS).sort((a, b) => a.position - b.position)
-    await writeJsonAtomic(todoPath(this.projectPath), { ...file, updatedAt: Date.now(), todos: kept })
+    await writeFileAtomic(todoPath(this.projectPath), renderTodos(kept))
   }
 
-  /** The list in display order. Done items are included unless told otherwise. */
+  /** The list in file order. Done items are included unless told otherwise. */
   async list(options: { includeDone?: boolean; limit?: number } = {}): Promise<Todo[]> {
-    const file = await this.load()
-    const items = [...file.todos].sort((a, b) => a.position - b.position)
-    const filtered = options.includeDone === false ? items.filter((todo) => todo.status !== "done") : items
+    const todos = await this.load()
+    const filtered = options.includeDone === false ? todos.filter((todo) => todo.status !== "done") : todos
     return options.limit ? filtered.slice(0, options.limit) : filtered
   }
 
-  /** Just the unfinished work, in order — what the panel and prompt show. */
+  /** Just the unfinished work, in order — what the panel and the prompt show. */
   async open(limit = TODO_PROMPT_LIMIT): Promise<Todo[]> {
-    const file = await this.load()
-    return [...file.todos]
-      .sort((a, b) => a.position - b.position)
-      .filter((todo) => OPEN_STATUSES.includes(todo.status))
+    return (await this.load())
+      .filter((todo) => todo.status !== "done")
       .slice(0, limit)
   }
 
   async counts(): Promise<{ open: number; doing: number; done: number; total: number }> {
-    return todoCounts(await this.list())
+    return todoCounts(await this.load())
   }
 
   /**
@@ -158,35 +194,25 @@ export class TodoStore {
   async add(input: AddTodoInput): Promise<Todo> {
     const title = input.title.replace(/\s+/g, " ").trim()
     if (!title) throw new Error("a todo needs a title")
-    const file = await this.load()
-    const existing = file.todos.find((todo) => normalise(todo.title) === normalise(title))
-    const now = Date.now()
+    const todos = await this.load()
+    const existing = todos.find((todo) => normalise(todo.title) === normalise(title))
 
     if (existing) {
-      existing.title = title
-      existing.detail = input.detail ?? existing.detail
-      existing.status = input.status ?? "open"
-      existing.updatedAt = now
-      if (existing.status === "done") existing.completedAt = now
-      else delete existing.completedAt
-      await this.save(file)
+      if (input.detail) existing.detail = input.detail
+      if (input.status) existing.status = input.status
+      await this.save(todos)
       return existing
     }
 
     const todo: Todo = {
-      id: todoId(),
+      id: todoIdFor(title),
       title,
       detail: input.detail,
       status: input.status ?? "open",
-      position: file.todos.reduce((max, item) => Math.max(max, item.position), -1) + 1,
-      sessionId: input.sessionId,
-      agentId: input.agentId,
-      createdAt: now,
-      updatedAt: now,
-      ...(input.status === "done" ? { completedAt: now } : {}),
+      position: todos.length,
     }
-    file.todos.push(todo)
-    await this.save(file)
+    todos.push(todo)
+    await this.save(todos)
     return todo
   }
 
@@ -199,115 +225,89 @@ export class TodoStore {
 
   /**
    * Replaces the list with exactly `items`, which is how the model keeps the
-   * plan in sync: it sends the whole list each time it replans. Titles that
-   * were already on the list keep their id and creation time.
+   * plan in sync: it sends the whole list each time it replans.
    */
-  async write(items: TodoInput[], context: { sessionId?: string; agentId?: string } = {}): Promise<Todo[]> {
-    const file = await this.load()
-    const byTitle = new Map(file.todos.map((todo) => [normalise(todo.title), todo]))
-    const now = Date.now()
-    const next: Todo[] = []
-
-    items.forEach((item, index) => {
+  async write(items: TodoInput[]): Promise<Todo[]> {
+    const todos: Todo[] = []
+    for (const item of items) {
       const title = item.title.replace(/\s+/g, " ").trim()
-      if (!title) return
-      const existing = byTitle.get(normalise(title))
-      const status: TodoStatus = item.status && STATUS_GLYPH[item.status] ? item.status : existing?.status ?? "open"
-      const todo: Todo = {
-        id: existing?.id ?? todoId(),
+      if (!title) continue
+      todos.push({
+        id: todoIdFor(title),
         title,
-        detail: item.detail ?? existing?.detail,
-        status,
-        position: index,
-        sessionId: existing?.sessionId ?? context.sessionId,
-        agentId: existing?.agentId ?? context.agentId,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      }
-      if (status === "done") todo.completedAt = existing?.completedAt ?? now
-      next.push(todo)
-    })
-
-    file.todos = next
-    await this.save(file)
-    return next
+        detail: item.detail,
+        status: item.status ?? "open",
+        position: todos.length,
+      })
+    }
+    await this.save(todos)
+    return todos
   }
 
   /**
    * Finds one todo by list number ("2"), id, id prefix, or a piece of its
-   * title. Numbering is 1-based over the display order of `list()`.
+   * title. Numbering is 1-based over the file order of `list()`.
    */
   async resolve(ref: string): Promise<Todo | undefined> {
     const needle = ref.trim()
     if (!needle) return undefined
-    const all = await this.list()
+    const all = await this.load()
     const index = Number(needle.replace(/^#/, ""))
     if (Number.isInteger(index) && index >= 1 && index <= all.length) return all[index - 1]
     const byId = all.find((todo) => todo.id === needle) ?? all.find((todo) => todo.id.startsWith(needle))
     if (byId) return byId
-    const lower = needle.toLowerCase()
-    return (
-      all.find((todo) => normalise(todo.title) === lower) ??
-      all.find((todo) => normalise(todo.title).includes(lower))
-    )
+    const lower = normalise(needle)
+    return all.find((todo) => normalise(todo.title) === lower) ?? all.find((todo) => normalise(todo.title).includes(lower))
   }
 
   async setStatus(ref: string, status: TodoStatus): Promise<Todo | undefined> {
     const todo = await this.resolve(ref)
     if (!todo) return undefined
-    const file = await this.load()
-    const target = file.todos.find((item) => item.id === todo.id)
+    const todos = await this.load()
+    const target = todos.find((item) => item.id === todo.id)
     if (!target) return undefined
     target.status = status
-    target.updatedAt = Date.now()
-    if (status === "done") target.completedAt = Date.now()
-    else delete target.completedAt
-    await this.save(file)
+    await this.save(todos)
     return target
   }
 
-  /** Marks everything on the list done — used when a plan finishes. */
+  /** Marks every step done — used when a plan finishes. */
   async completeAll(): Promise<number> {
-    const file = await this.load()
-    const now = Date.now()
+    const todos = await this.load()
     let changed = 0
-    for (const todo of file.todos) {
+    for (const todo of todos) {
       if (todo.status === "done") continue
       todo.status = "done"
-      todo.updatedAt = now
-      todo.completedAt = now
       changed++
     }
-    if (changed > 0) await this.save(file)
+    if (changed > 0) await this.save(todos)
     return changed
   }
 
   async remove(ref: string): Promise<boolean> {
     const todo = await this.resolve(ref)
     if (!todo) return false
-    const file = await this.load()
-    const before = file.todos.length
-    file.todos = file.todos.filter((item) => item.id !== todo.id).map((item, index) => ({ ...item, position: index }))
-    if (file.todos.length === before) return false
-    await this.save(file)
+    const todos = await this.load()
+    const before = todos.length
+    const kept = todos.filter((item) => item.id !== todo.id).map((item, index) => ({ ...item, position: index }))
+    if (kept.length === before) return false
+    await this.save(kept)
     return true
   }
 
   /** Drops the finished steps, keeping the open ones. */
   async clearDone(): Promise<number> {
-    const file = await this.load()
-    const before = file.todos.length
-    file.todos = file.todos.filter((todo) => todo.status !== "done").map((item, index) => ({ ...item, position: index }))
-    const removed = before - file.todos.length
-    if (removed > 0) await this.save(file)
+    const todos = await this.load()
+    const kept = todos.filter((todo) => todo.status !== "done").map((item, index) => ({ ...item, position: index }))
+    const removed = todos.length - kept.length
+    if (removed > 0) await this.save(kept)
     return removed
   }
 
   async clear(): Promise<number> {
-    const file = await this.load()
-    const count = file.todos.length
-    await this.save({ ...file, todos: [] })
-    return count
+    const todos = await this.load()
+    await this.save([])
+    return todos.length
   }
 }
 

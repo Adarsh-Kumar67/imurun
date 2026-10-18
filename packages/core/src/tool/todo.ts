@@ -109,7 +109,7 @@ export const todoTool: ImurunTool = {
         case "plan": {
           const items = asItems(args)
           if (items.length === 0) return fail("The plan was empty — send at least one step.")
-          const todos = await store.write(items, { sessionId: ctx.sessionId })
+          const todos = await store.write(items)
           return ok(`Plan set (${todos.length} step${todos.length === 1 ? "" : "s"}):\n${render(todos)}`, {
             title: `plan \u00b7 ${todos.length} steps`,
             data: todos,
@@ -119,11 +119,7 @@ export const todoTool: ImurunTool = {
         case "add": {
           const title = optionalString(args, "title")
           if (!title?.trim()) return fail("action=add needs a title.")
-          const todo = await store.add({
-            title,
-            detail: optionalString(args, "detail"),
-            sessionId: ctx.sessionId,
-          })
+          const todo = await store.add({ title, detail: optionalString(args, "detail") })
           return ok(`Added: ${todoGlyph(todo.status)} ${todo.title}`, { title: `todo add`, data: todo })
         }
 
