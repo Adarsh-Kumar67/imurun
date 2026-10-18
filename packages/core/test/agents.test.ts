@@ -1,0 +1,101 @@
+import { describe, expect, test } from "bun:test"
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { isToolAllowed } from "@imurun/schema"
+import {
+  BUILTIN_AGENTS,
+  ToolRegistry,
+  defaultAgent,
+  getAgent,
+  loadAgents,
+  primaryAgents,
+  restrictToolRegistry,
+  subagents,
+} from "../src"
+
+describe("agent definitions", () => {
+  test("ships the expected built-ins", () => {
+    const ids = BUILTIN_AGENTS.map((a) => a.id)
+    expect(ids).toContain("build")
+    expect(ids).toContain("plan")
+    expect(ids).toContain("general")
+    expect(ids).toContain("explore")
+  })
+
+  test("isToolAllowed honors allow-lists and deny-lists", () => {
+    const build = getAgent(BUILTIN_AGENTS, "build")!
+    expect(isToolAllowed(build, "shell")).toBe(true)
+    expect(isToolAllowed(build, "anything-new")).toBe(true)
+
+    const plan = getAgent(BUILTIN_AGENTS, "plan")!
+    expect(isToolAllowed(plan, "read")).toBe(true)
+    expect(isToolAllowed(plan, "write")).toBe(false)
+    expect(isToolAllowed(plan, "shell")).toBe(false)
+
+    const custom = { ...build, tools: ["read", "grep"], disabledTools: [] }
+    expect(isToolAllowed(custom, "read")).toBe(true)
+    expect(isToolAllowed(custom, "glob")).toBe(false)
+  })
+
+  test("getAgent is case-insensitive and also matches by name", () => {
+    expect(getAgent(BUILTIN_AGENTS, "BUILD")?.id).toBe("build")
+    expect(getAgent(BUILTIN_AGENTS, "Plan")?.id).toBe("plan")
+    expect(getAgent(BUILTIN_AGENTS, "nope")).toBeUndefined()
+  })
+
+  test("defaultAgent prefers build", () => {
+    expect(defaultAgent(BUILTIN_AGENTS).id).toBe("build")
+    expect(primaryAgents(BUILTIN_AGENTS).every((a) => a.mode === "primary")).toBe(true)
+    expect(subagents(BUILTIN_AGENTS).some((a) => a.id === "explore")).toBe(true)
+  })
+
+  test("restrictToolRegistry keeps only allowed tools", () => {
+    const base = ToolRegistry.default()
+    const plan = getAgent(BUILTIN_AGENTS, "plan")!
+    const names = restrictToolRegistry(base, plan)
+      .list()
+      .map((t) => t.name)
+    expect(names).toContain("read")
+    expect(names).toContain("glob")
+    expect(names).toContain("grep")
+    expect(names).not.toContain("write")
+    expect(names).not.toContain("edit")
+    expect(names).not.toContain("shell")
+  })
+})
+
+describe("loading user agents", () => {
+  test("reads markdown frontmatter from the project directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "imurun-agent-"))
+    const agentsDir = join(dir, ".imurun", "agents")
+    await mkdir(agentsDir, { recursive: true })
+    await writeFile(
+      join(agentsDir, "docs.md"),
+      ["---", "name: Docs Writer", "description: Writes docs", "tools: read, write, grep", "---", "You write tidy docs."].join(
+        "\n",
+      ),
+      "utf8",
+    )
+    await writeFile(
+      join(agentsDir, "reviewer.json"),
+      JSON.stringify({ id: "reviewer", name: "Reviewer", description: "Reviews code", tools: ["read", "grep"] }),
+      "utf8",
+    )
+
+    const agents = await loadAgents({ workingDir: dir })
+    const docs = getAgent(agents, "docs")
+    expect(docs?.name).toBe("Docs Writer")
+    expect(docs?.prompt).toContain("tidy docs")
+    expect(docs?.tools).toEqual(["read", "write", "grep"])
+    expect(docs?.source).toBe("project")
+    expect(docs?.builtin).toBe(false)
+
+    const reviewer = getAgent(agents, "reviewer")
+    expect(reviewer?.description).toBe("Reviews code")
+    expect(reviewer?.tools).toEqual(["read", "grep"])
+
+    // built-ins are still present alongside user agents
+    expect(getAgent(agents, "build")).toBeDefined()
+  })
+})

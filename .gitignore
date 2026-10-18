@@ -1,0 +1,17 @@
+node_modules/
+dist/
+out/
+*.log
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local overrides
+imurun.local.json
