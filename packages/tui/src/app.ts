@@ -312,6 +312,9 @@ export class TuiApp {
   private compactBudget = false
   /** The tool currently running, so the status line can name the phase. */
   private runningTool?: { name: string; label: string; words: readonly string[]; startedAt: number }
+  /** Subagents running right now, so the status line and panel can count them. */
+  private activeSubagents = 0
+  private subagentLine?: { agentId: string; label: string; startedAt: number }
   private readonly originalConsoleError: typeof console.error
 
   private readonly closePromise: Promise<number>
@@ -1176,7 +1179,7 @@ export class TuiApp {
     this.skillChip = undefined
 
     const tools = restrictToolRegistry(this.baseTools, this.agent)
-    const extra = this.agent.prompt.trim() ? [this.agent.prompt] : undefined
+    const role = this.agent.prompt.trim() || undefined
 
     const onEvent = (event: AgentEvent): void => {
       this.touchActivity()
@@ -1304,7 +1307,7 @@ export class TuiApp {
         workingDir: this.workingDir,
         agentId: this.agent.id,
         tools,
-        extraSystemSections: extra,
+        role,
         signal: controller.signal,
         contextWindow: this.contextMax,
         tightContext: this.compactBudget,
@@ -1842,17 +1845,32 @@ export class TuiApp {
   }
 
   private async runSubagent(request: SubagentRequest): Promise<SubagentResult> {
-    const def = (request.agentId ? getAgent(this.agents, request.agentId) : undefined) ?? this.taskAgents()[0]!
+    // A subagent inherits the calling agent, so it works the same way the parent
+    // does unless the model asked for a different mode.
+    const def =
+      (request.agentId ? getAgent(this.agents, request.agentId) : undefined) ??
+      (request.agentId === undefined && this.agent.mode === "subagent" ? this.agent : undefined) ??
+      this.taskAgents()[0]!
     const label = request.description ? ` ${theme.dim(request.description)}` : ""
-    this.pushBlock({ kind: "notice", text: `${theme.accent(def.id)}${label}`, tone: "info" })
+    this.pushBlock({ kind: "notice", text: `${theme.accent("\u2937")} ${theme.accent(def.id)}${label}`, tone: "info" })
+
+    this.activeSubagents += 1
+    this.subagentLine = { agentId: def.id, label: request.description?.trim() || def.id, startedAt: Date.now() }
+    this.ensureTick()
+    this.scheduleRender()
 
     const child = this.sessions.create({
       workingDir: request.workingDir,
       model: def.model ?? this.modelRef,
       parentSessionId: request.sessionId,
     })
-    const tools = restrictToolRegistry(this.subagentTools, def)
-    const extra = def.prompt.trim() ? [def.prompt] : undefined
+    const tools = new ToolRegistry()
+    // A subagent must not spawn subagents of its own: nesting multiplies context
+    // windows and makes the report impossible to attribute.
+    for (const tool of restrictToolRegistry(this.subagentTools, def).list()) {
+      if (tool.name !== "task") tools.register(tool)
+    }
+    const role = def.prompt.trim() || undefined
 
     const agent = new Agent({
       sessions: this.sessions,
@@ -1863,27 +1881,49 @@ export class TuiApp {
       memory: this.memory,
       onPermission: (perm, name) => this.handlePermission(perm, name),
     })
-    const result = await agent.run({
-      sessionId: child.id,
-      input: request.prompt,
-      model: def.model ?? this.modelRef,
-      workingDir: request.workingDir,
-      agentId: def.id,
-      tools,
-      extraSystemSections: extra,
-      signal: request.signal,
-      contextWindow: this.contextMax,
-      onEvent: request.onEvent
-        ? (event: AgentEvent) => {
-            if (event.type === "text") request.onEvent?.({ type: "text", delta: event.delta })
-            else if (event.type === "text-reset") request.onEvent?.({ type: "reset", text: event.text })
-            else if (event.type === "tool-start") request.onEvent?.({ type: "tool", name: event.name, title: event.title })
-            else if (event.type === "step-start") request.onEvent?.({ type: "step", step: event.step })
-          }
-        : undefined,
-    })
 
-    return { text: result.text, agentId: def.id, sessionId: child.id }
+    const forward = (event: AgentEvent): void => {
+      // Name what the child is doing while it works: the transcript stays clean,
+      // but the user can still see it is not stuck.
+      if (event.type === "tool-start") {
+        this.subagentLine = {
+          agentId: def.id,
+          label: event.title ?? event.name,
+          startedAt: this.subagentLine?.startedAt ?? Date.now(),
+        }
+        this.scheduleRender()
+      }
+      if (event.type === "text") request.onEvent?.({ type: "text", delta: event.delta })
+      else if (event.type === "text-reset") request.onEvent?.({ type: "reset", text: event.text })
+      else if (event.type === "tool-start") request.onEvent?.({ type: "tool", name: event.name, title: event.title })
+      else if (event.type === "step-start") request.onEvent?.({ type: "step", step: event.step })
+    }
+
+    try {
+      const result = await agent.run({
+        sessionId: child.id,
+        input: request.prompt,
+        model: def.model ?? this.modelRef,
+        workingDir: request.workingDir,
+        agentId: def.id,
+        tools,
+        role,
+        signal: request.signal,
+        contextWindow: this.contextMax,
+        onEvent: forward,
+      })
+
+      const first = result.text.trim().split("\n")[0] ?? ""
+      this.pushNotice(
+        `${theme.accent(def.id)} finished${first ? ` \u00b7 ${first.slice(0, 80)}` : ""}`,
+        "info",
+      )
+      return { text: result.text, agentId: def.id, sessionId: child.id }
+    } finally {
+      this.activeSubagents = Math.max(this.activeSubagents - 1, 0)
+      if (this.activeSubagents === 0) this.subagentLine = undefined
+      this.scheduleRender()
+    }
   }
 
   // ── Command support (called by ./commands) ────────────────────────────────
@@ -2926,7 +2966,7 @@ export class TuiApp {
   }
 
   private needsAnimation(): boolean {
-    return this.busy || this.agentSwitch !== undefined || this.installLine !== undefined
+    return this.busy || this.agentSwitch !== undefined || this.installLine !== undefined || this.activeSubagents > 0
   }
 
   private stopTick(): void {
@@ -3038,6 +3078,7 @@ export class TuiApp {
       todos: this.todos,
       plan: this.plan ? planCounts(this.plan.steps) : undefined,
       queue: this.queue.size,
+      subagents: this.activeSubagents,
       busy: this.busy,
     }
   }
@@ -3394,10 +3435,14 @@ export class TuiApp {
       const phase = tool && tool.words.length > 0 ? progressPhrase(tool.words, Date.now() - tool.startedAt) : ""
       const skill = this.skillChip ? `${theme.accent(this.skillChip.name)} ${theme.dim("\u00b7")} ` : ""
       const queued = this.queue.size > 0 ? `${theme.warn(`${this.queue.size} queued`)} ${theme.dim("\u00b7")} ` : ""
+      const subagent =
+        this.activeSubagents > 0
+          ? `${theme.accent("\u2937")} ${theme.muted(padVisible(this.subagentLine?.label ?? "subagent", 20))} ${theme.dim("\u00b7")} `
+          : ""
       const phasePart = phase ? ` ${theme.dim("\u00b7")} ${theme.muted(padVisible(phase, 22))}` : ""
       return fitVisible(
         `  ${spin} ${theme.dim(label)}${phasePart} ${theme.dim("\u00b7")} ${theme.dim(elapsed)} ${theme.dim("\u00b7")} ` +
-          `${skill}${queued}${theme.dim("esc interrupts")}`,
+          `${subagent}${skill}${queued}${theme.dim("esc interrupts")}`,
         width,
       )
     }

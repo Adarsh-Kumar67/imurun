@@ -9,6 +9,8 @@ export interface ToolContext {
   /** Directory the agent operates in; relative paths resolve against it. */
   workingDir: string
   sessionId: string
+  /** Agent running this call; a subagent defaults to the same one. */
+  agentId?: string
   signal?: AbortSignal
   log: Logger
   /**

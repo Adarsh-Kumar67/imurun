@@ -238,6 +238,28 @@ describe("plan tool", () => {
 })
 
 describe("the prompt", () => {
+  test("composes base, then role, then the environment", () => {
+    const prompt = buildSystemPrompt({
+      workingDir: "C:/work",
+      role: "You are Test: a very specific agent.",
+    })
+    const base = prompt.indexOf("You are IMURUN")
+    const role = prompt.indexOf("You are Test")
+    const environment = prompt.indexOf("Environment:")
+    expect(base).toBeGreaterThanOrEqual(0)
+    expect(role).toBeGreaterThan(base)
+    expect(environment).toBeGreaterThan(role)
+  })
+
+  test("a role never comes after the project instructions", () => {
+    const prompt = buildSystemPrompt({
+      workingDir: "C:/work",
+      role: "You are Test.",
+      instructions: ["always use tabs"],
+    })
+    expect(prompt.indexOf("You are Test.")).toBeLessThan(prompt.indexOf("Project instructions"))
+  })
+
   test("includes the plan when there is one", () => {
     const prompt = buildSystemPrompt({
       workingDir: "C:/work",

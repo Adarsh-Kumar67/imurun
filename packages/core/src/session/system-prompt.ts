@@ -14,6 +14,12 @@
 
 export interface SystemPromptContext {
   workingDir: string
+  /**
+   * The role preamble for this agent: who it is, what it does, what it must
+   * never do, and what it returns. Sits directly after the shared base so a
+   * role can specialise the general rules; project instructions still win.
+   */
+  role?: string
   model?: string
   /** Names of the tools available this run. */
   tools?: string[]
@@ -83,6 +89,10 @@ Planning work that takes more than a couple of steps:
   over in the side panel. The plan is the reasoning; the todos are the steps being worked right now.
 - A plan that only lives in your head is lost the moment the window fills. A plan on disk is picked up by the
   next step, the next session, and the user.
+- Work that splits into independent pieces — three libraries to compare, four unrelated modules to read — goes
+  to subagents together with the task tool, not one after another: they run at the same time and you merge the
+  reports. Give each one a brief that stands on its own: the aim, the files to look at, the rules, and exactly
+  what to return. They cannot see this conversation.
 
 Writing files inside a small context window (a request that is too large is refused outright):
 - Never emit a whole file in one call. Create it with mode "create", then extend it with mode "append" a few
@@ -120,6 +130,10 @@ function bullets(items: string[]): string {
 
 export function buildSystemPrompt(ctx: SystemPromptContext): string {
   const sections: string[] = [BASE]
+
+  // The role comes straight after the shared discipline: close enough to
+  // specialise it, still beneath the project instructions at the very end.
+  if (ctx.role?.trim()) sections.push(ctx.role.trim())
 
   const environment = [
     "Environment:",

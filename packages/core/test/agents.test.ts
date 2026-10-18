@@ -10,6 +10,7 @@ import {
   getAgent,
   loadAgents,
   primaryAgents,
+  renderRole,
   restrictToolRegistry,
   subagents,
 } from "../src"
@@ -21,6 +22,47 @@ describe("agent definitions", () => {
     expect(ids).toContain("plan")
     expect(ids).toContain("general")
     expect(ids).toContain("explore")
+  })
+
+  test("every built-in has a full, distinct role preamble", () => {
+    const prompts = new Set<string>()
+    for (const agent of BUILTIN_AGENTS) {
+      const prompt = agent.prompt.trim()
+      expect(prompt.length).toBeGreaterThan(200)
+      expect(prompt).toContain("What you do:")
+      expect(prompt).toContain("What you must never do")
+      expect(prompt).toContain("What you return:")
+      prompts.add(prompt)
+    }
+    // no two roles are the same text
+    expect(prompts.size).toBe(BUILTIN_AGENTS.length)
+  })
+
+  test("renderRole keeps the four parts in order", () => {
+    const rendered = renderRole({
+      identity: "You are Test.",
+      duties: ["do this"],
+      constraints: ["never that"],
+      output: "a report",
+    })
+    expect(rendered.indexOf("You are Test.")).toBeLessThan(rendered.indexOf("What you do:"))
+    expect(rendered.indexOf("What you do:")).toBeLessThan(rendered.indexOf("What you must never do"))
+    expect(rendered.indexOf("What you must never do")).toBeLessThan(rendered.indexOf("What you return:"))
+    expect(rendered).toContain("- do this")
+    expect(rendered).toContain("- never that")
+  })
+
+  test("a role with no constraints still renders", () => {
+    const rendered = renderRole({ identity: "You are Test.", duties: [], constraints: [], output: "" })
+    expect(rendered).toBe("You are Test.")
+  })
+
+  test("read-only roles say so in their own words", () => {
+    const plan = getAgent(BUILTIN_AGENTS, "plan")!.prompt
+    const explore = getAgent(BUILTIN_AGENTS, "explore")!.prompt
+    expect(plan).toContain("read-only")
+    expect(plan).toContain("Never write, edit, or delete a file")
+    expect(explore).toContain("Never modify anything")
   })
 
   test("isToolAllowed honors allow-lists and deny-lists", () => {

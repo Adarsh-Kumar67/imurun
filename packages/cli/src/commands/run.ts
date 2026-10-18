@@ -127,7 +127,7 @@ export const runCommand: Command = {
     }
     const activeAgent = agentDef ?? defaultAgent(agents)
     const tools = restrictToolRegistry(baseTools, activeAgent)
-    const extraSections = activeAgent.prompt.trim() ? [activeAgent.prompt] : undefined
+    const role = activeAgent.prompt.trim() || undefined
 
     if (!quiet) {
       process.stderr.write(
@@ -235,7 +235,7 @@ export const runCommand: Command = {
         model: modelRef,
         workingDir,
         agentId: activeAgent.id,
-        extraSystemSections: extraSections,
+        role,
         contextWindow,
         onEvent,
       })

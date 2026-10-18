@@ -80,7 +80,12 @@ export interface RunOptions {
   tools?: ToolRegistry
   /** Active agent id, surfaced in the system prompt. */
   agentId?: string
-  /** Extra system-prompt sections appended for this run (agent preamble). */
+  /**
+   * The agent's role preamble. Placed directly after the shared base rules, so
+   * a role can specialise them; project instructions still win.
+   */
+  role?: string
+  /** Extra system-prompt sections appended for this run (skills, one-offs). */
   extraSystemSections?: string[]
   /** Skip memory recall for this run (subagents, one-shot utilities). */
   disableMemory?: boolean
@@ -328,6 +333,7 @@ export class Agent {
         workingDir: run.workingDir,
         model: resolved.modelId,
         agent: run.agentId,
+        role: run.role,
         tools: activeTools.list().map((tool) => tool.name),
         capabilities,
         skillsDir: imurunDir("skills"),
@@ -705,6 +711,7 @@ export class Agent {
     const ctx: ToolContext = {
       workingDir: run.workingDir,
       sessionId: run.sessionId,
+      agentId: run.agentId,
       signal: run.signal,
       log: this.log.child(name),
       ledger: ledgerFor(run.workingDir),

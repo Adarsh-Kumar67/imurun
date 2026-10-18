@@ -31,6 +31,8 @@ export interface SidebarState {
   todos: SidebarTodo[]
   /** Number of messages waiting behind the current turn. */
   queue: number
+  /** Subagents running right now. */
+  subagents?: number
   busy: boolean
 }
 
@@ -154,6 +156,12 @@ export function sidebarLines(state: SidebarState): string[] {
       lines.push(padVisible(` ${glyph} ${text}`, width))
     }
     if (ordered.length > 6) lines.push(value(theme.dim(`+${ordered.length - 6} more`), width))
+  }
+
+  if (state.subagents && state.subagents > 0) {
+    lines.push(blank(width))
+    lines.push(title(`subagents  ${state.subagents}`, width))
+    lines.push(value(theme.accent("\u2937 working"), width))
   }
 
   if (state.queue > 0) {
