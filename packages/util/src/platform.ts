@@ -36,6 +36,28 @@ export function isWindows(): boolean {
   return process.platform === "win32"
 }
 
+/**
+ * Hands a path or URL to the desktop to open with its normal application
+ * (Explorer/Finder/xdg). Detached and unref'ed, so a viewer that stays open
+ * never holds IMURUN back. Returns false when the opener could not be started.
+ */
+export function openInSystem(target: string): boolean {
+  try {
+    if (process.platform === "win32") {
+      // `start` is a cmd builtin, so it has to go through cmd itself. The empty
+      // "" is the window title — without it, a quoted path is taken as one.
+      Bun.spawnSync(["cmd", "/c", "start", "", target], { stdio: ["ignore", "ignore", "ignore"] })
+    } else if (process.platform === "darwin") {
+      Bun.spawnSync(["open", target], { stdio: ["ignore", "ignore", "ignore"] })
+    } else {
+      Bun.spawnSync(["xdg-open", target], { stdio: ["ignore", "ignore", "ignore"] })
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function homeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? os.homedir()
 }

@@ -24,9 +24,27 @@ describe("command registry", () => {
 
   test("core commands are present", () => {
     const names = registry.unique().map((command) => command.name)
-    for (const expected of ["help", "session", "model", "agent", "permission", "skills", "exit"]) {
+    for (const expected of [
+      "help",
+      "session",
+      "model",
+      "agent",
+      "permission",
+      "skills",
+      "provider",
+      "setup",
+      "plan",
+      "todo",
+      "exit",
+    ]) {
       expect(names).toContain(expected)
     }
+  })
+
+  test("/plan and /todo are the planning pair", () => {
+    expect(registry.find("plan")?.usage).toContain("/plan")
+    expect(registry.find("todo")?.name).toBe("todo")
+    expect(registry.find("todos")?.name).toBe("todo")
   })
 
   test("aliases appear in completion but only once in the help list", () => {

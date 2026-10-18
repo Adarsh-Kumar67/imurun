@@ -36,6 +36,9 @@ import {
   loadConfigSafe,
   loadSkills,
   patchGlobalConfig,
+  planCounts,
+  planPath,
+  planStoreFor,
   primaryAgents,
   probeProvider,
   providerModelOptions,
@@ -50,6 +53,7 @@ import {
 import type {
   AgentEvent,
   PermissionRequest,
+  Plan,
   ProviderPreset,
   SkillDefinition,
   SubagentRequest,
@@ -79,7 +83,7 @@ import type {
   QuantType,
   Session,
 } from "@imurun/schema"
-import { formatBytes, formatDuration, formatTimestamp, setLogLevel } from "@imurun/util"
+import { formatBytes, formatDuration, formatTimestamp, openInSystem, setLogLevel } from "@imurun/util"
 import { agentSwitchLine, caret as caretGlyph, ellipsis, progress as animProgress, spinnerFrame } from "./animate"
 import { createCommandRegistry } from "./commands"
 import { KeyParser, type KeyEvent, type MouseEvent } from "./keys"
@@ -280,6 +284,8 @@ export class TuiApp {
   private todos: SidebarTodo[] = []
   /** The plan as stored, so /todo can act on it by number. */
   private todoItems: Todo[] = []
+  /** The written plan for this project, when one exists. */
+  private plan?: Plan
   private transcriptLineCount = 0
 
   // ── session state ──
@@ -1259,8 +1265,13 @@ export class TuiApp {
             const preview = writtenCode(event.name, args)
             if (preview) this.pushBlock(preview)
           }
-          // A plan change should appear in the panel immediately, not at the end.
-          if (event.name === "todo") void this.refreshTodos().then(() => this.scheduleRender())
+          // A plan or todo change should show in the panel immediately, not at
+          // the end of the turn.
+          if (event.name === "todo" || event.name === "plan") {
+            void this.refreshPlan()
+              .then(() => this.refreshTodos())
+              .then(() => this.scheduleRender())
+          }
           this.scheduleRender()
           break
         }
@@ -3025,6 +3036,7 @@ export class TuiApp {
       permissions: this.permissions.getMode(),
       context: { used: this.contextUsed, max: this.contextMax },
       todos: this.todos,
+      plan: this.plan ? planCounts(this.plan.steps) : undefined,
       queue: this.queue.size,
       busy: this.busy,
     }
@@ -3065,6 +3077,114 @@ export class TuiApp {
     this.todos = (await this.memory.openTodos(this.workingDir))
       .slice(0, 8)
       .map((title) => ({ title, status: "open" as const }))
+  }
+
+  /** Reads the written plan (`.imurun/PLAN.md`) for the panel. */
+  private async refreshPlan(): Promise<void> {
+    this.plan = await planStoreFor(this.workingDir).read()
+  }
+
+  // ── Plan ──────────────────────────────────────────────────────────────────
+
+  /** `/plan` — the written shape of the work, plus the goals the model set. */
+  async planCommand(args: string[]): Promise<void> {
+    const [action = "", ...rest] = args
+    const value = rest.join(" ").trim()
+    const store = planStoreFor(this.workingDir)
+
+    if (!action || action === "show" || action === "list") {
+      const plan = await store.read()
+      this.print()
+      if (!plan) {
+        this.print(theme.dim("  no plan for this project yet \u2014 /plan new <goal>, or ask for a big task and it writes one"))
+        this.print(theme.dim(`  it lives at ${planPath(this.workingDir)}`))
+        this.print()
+        return
+      }
+      const counts = planCounts(plan.steps)
+      this.print(`  ${theme.bold("Goal")}  ${plan.goal}`)
+      if (plan.approach) this.print(`  ${theme.bold("How")}   ${theme.dim(plan.approach)}`)
+      this.print()
+      this.print(`  ${theme.bold("Steps")} ${theme.dim(`${counts.done}/${counts.total} done`)}`)
+      plan.steps.forEach((step, index) => {
+        const mark = step.status === "done" ? theme.ok("\u2611") : theme.warn("\u2610")
+        const text = step.status === "done" ? theme.dim(step.title) : step.title
+        const files = step.files.length > 0 ? theme.dim(` \u2014 ${step.files.join(", ")}`) : ""
+        this.print(`  ${theme.accent(String(index + 1).padStart(2))}. ${mark} ${text}${files}`)
+      })
+      if (plan.notes.length > 0) {
+        this.print()
+        this.print(`  ${theme.bold("Notes")}`)
+        for (const note of plan.notes) this.print(`    ${theme.dim(note)}`)
+      }
+      this.print()
+      this.print(theme.dim(`  ${planPath(this.workingDir)}`))
+      this.print(theme.dim("  /plan new <goal> \u00b7 /plan done <n> \u00b7 /plan reopen <n> \u00b7 /plan clear"))
+      this.print()
+      return
+    }
+
+    if (action === "new" || action === "write") {
+      if (!value) {
+        this.printError("usage: /plan new <goal>")
+        return
+      }
+      const plan = await store.write({ goal: value })
+      await this.refreshPlan()
+      this.pushNotice(`plan written \u00b7 ${plan.goal}`, "ok")
+      return
+    }
+
+    if (action === "open" || action === "edit") {
+      const target = planPath(this.workingDir)
+      this.print(openInSystem(target) ? theme.dim(`  opened ${target}`) : theme.warn(`  could not open ${target}`))
+      return
+    }
+
+    if (action === "done" || action === "reopen") {
+      if (!value) {
+        this.printError(`usage: /plan ${action} <number|text>`)
+        return
+      }
+      const step = await store.setStepStatus(value, action === "done" ? "done" : "open")
+      if (!step) {
+        this.printError(`no plan step matches "${value}" \u2014 /plan lists them`)
+        return
+      }
+      await this.refreshPlan()
+      await this.refreshTodos()
+      this.pushNotice(`${step.status === "done" ? "\u2611" : "\u2610"} ${step.title} \u2014 ${step.status}`, "ok")
+      return
+    }
+
+    if (action === "note") {
+      if (!value) {
+        this.printError("usage: /plan note <text>")
+        return
+      }
+      const plan = await store.addNote(value)
+      if (!plan) {
+        this.printError("there is no plan yet \u2014 /plan new <goal>")
+        return
+      }
+      await this.refreshPlan()
+      this.pushNotice("note added to the plan", "ok")
+      return
+    }
+
+    if (action === "clear" || action === "reset") {
+      const answer = await this.confirm("delete the plan file?", "[y/N]")
+      if (answer.toLowerCase() !== "y") {
+        this.print(theme.dim("  kept"))
+        return
+      }
+      await store.clear()
+      await this.refreshPlan()
+      this.pushNotice("plan cleared", "ok")
+      return
+    }
+
+    this.printError(`unknown: /plan ${action} \u2014 try show, new, done, reopen, note or clear`)
   }
 
   // ── Todos ─────────────────────────────────────────────────────────────────

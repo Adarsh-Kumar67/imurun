@@ -25,6 +25,8 @@ export interface SidebarState {
   permissions: string
   /** Estimated context usage for the active session. */
   context?: { used: number; max: number }
+  /** Steps of the written plan (`.imurun/PLAN.md`), when there is one. */
+  plan?: { done: number; total: number }
   /** The plan, in the order it should be shown. */
   todos: SidebarTodo[]
   /** Number of messages waiting behind the current turn. */
@@ -124,6 +126,16 @@ export function sidebarLines(state: SidebarState): string[] {
 
   lines.push(title("session", width))
   lines.push(value(theme.muted(state.session), width))
+
+  // The written plan for the project, if there is one. Just the progress here;
+  // `/plan` shows the goal and the steps.
+  if (state.plan) {
+    lines.push(blank(width))
+    lines.push(title("plan", width))
+    const all = state.plan.total > 0 && state.plan.done >= state.plan.total
+    const summary = `${state.plan.done}/${state.plan.total} steps`
+    lines.push(value(all ? theme.ok(summary) : theme.accent(summary), width))
+  }
 
   if (state.todos.length > 0) {
     const ordered = orderTodos(state.todos)

@@ -34,6 +34,8 @@ export const AUTO_ALLOW_TOOLS: readonly string[] = [
   "code_search",
   "memory",
   "progress",
+  "todo",
+  "plan",
   "web_search",
   "web_fetch",
 ] as const

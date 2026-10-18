@@ -84,6 +84,17 @@ describe("sidebarLines", () => {
     expect(plain).toContain("not loaded")
   })
 
+  test("shows the written plan's progress when there is one", () => {
+    const withPlan = sidebarLines({ ...state, plan: { done: 2, total: 5 } }).map(stripAnsi).join("\n")
+    expect(withPlan).toContain("PLAN")
+    expect(withPlan).toContain("2/5 steps")
+
+    const finished = sidebarLines({ ...state, plan: { done: 5, total: 5 } }).map(stripAnsi).join("\n")
+    expect(finished).toContain("5/5 steps")
+
+    expect(sidebarLines(state).map(stripAnsi).join("\n")).not.toContain("PLAN")
+  })
+
   test("todos show a tick, a half tick, or an empty box", () => {
     const plain = sidebarLines({
       ...state,

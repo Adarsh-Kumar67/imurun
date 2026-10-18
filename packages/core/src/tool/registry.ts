@@ -18,6 +18,7 @@ import { grepTool } from "./grep"
 import { memoryTool } from "./memory"
 import { progressTool } from "./progress"
 import { todoTool } from "./todo"
+import { planTool } from "./plan"
 import { codeSearchTool } from "./rag"
 import { webFetchTool, webSearchTool } from "./web"
 
@@ -69,6 +70,7 @@ export class ToolRegistry {
       .register(memoryTool)
       .register(progressTool)
       .register(todoTool)
+      .register(planTool)
       .register(webSearchTool)
       .register(webFetchTool)
   }

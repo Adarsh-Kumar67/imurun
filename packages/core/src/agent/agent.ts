@@ -31,6 +31,7 @@ import {
 import type { MemoryStore } from "../memory/store"
 import { digestToPrompt, messageText } from "../memory/summarize"
 import { formatLedger, ledgerFor } from "../memory/ledger"
+import { planPromptLines } from "../todo/plan"
 import { todoPromptLines } from "../tool/todo"
 import { formatHit } from "../memory/search"
 import { selectSkills, skillsToPromptSection } from "./skills"
@@ -259,6 +260,14 @@ export class Agent {
       this.log.debug(`todo list skipped: ${errorMessage(error)}`)
     }
 
+    // The written plan for this project, if a previous run left one.
+    let planLines: string[] = []
+    try {
+      planLines = await planPromptLines(run.workingDir)
+    } catch (error) {
+      this.log.debug(`plan skipped: ${errorMessage(error)}`)
+    }
+
     if (memory && memoryOn) {
       try {
         const query = typeof run.input === "string" ? run.input : run.input.map((p) => (p.type === "text" ? p.text : "")).join(" ")
@@ -327,6 +336,7 @@ export class Agent {
         memories,
         notes: durableNotes,
         todos: summary ? [] : [...planned, ...todos],
+        plan: summary ? undefined : planLines,
         compactedSummary: summary,
         extraSections: [...(run.extraSystemSections ?? []), ...skillSections],
         inProgress,

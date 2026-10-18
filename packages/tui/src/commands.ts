@@ -72,8 +72,17 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "plan",
+    aliases: ["plans"],
+    summary: "Show the written plan (goal, approach, steps) and update it",
+    usage: "/plan [show | new <goal> | done <n> | reopen <n> | note <text> | open | clear]",
+    run(app, args) {
+      return app.planCommand(args)
+    },
+  },
+  {
     name: "todo",
-    aliases: ["todos", "plan"],
+    aliases: ["todos"],
     summary: "Show or edit the plan the model is working through",
     usage: "/todo [list | add <step> | start <n> | done <n> | reopen <n> | rm <n> | clear-done]",
     run(app, args) {

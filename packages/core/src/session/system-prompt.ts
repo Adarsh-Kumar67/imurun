@@ -32,6 +32,8 @@ export interface SystemPromptContext {
   notes?: string[]
   /** Unfinished work carried across sessions. */
   todos?: string[]
+  /** The written plan for the project, from `.imurun/PLAN.md`. */
+  plan?: string[]
   /** Key/value facts about work in flight, from the project ledger. */
   inProgress?: string[]
   /** Summary of earlier turns that were compacted out of the window. */
@@ -72,6 +74,15 @@ Find things out before you answer:
   outside this project, anything recent — search for it first (web_search, then web_fetch to read the page).
   Never answer such a question from memory, and never guess.
 - Trust what the code in this project actually says over what you assume a library does.
+
+Planning work that takes more than a couple of steps:
+- Write it down before you start: the plan tool records the goal, the approach, and the ordered steps with the
+  files each one touches, in .imurun/PLAN.md. Work the plan, keep it current as the shape of the task changes,
+  and mark a step done only when it really is.
+- Keep the shorter moment-to-moment checklist in the todo tool (.imurun/todos.md), which the user watches tick
+  over in the side panel. The plan is the reasoning; the todos are the steps being worked right now.
+- A plan that only lives in your head is lost the moment the window fills. A plan on disk is picked up by the
+  next step, the next session, and the user.
 
 Writing files inside a small context window (a request that is too large is refused outright):
 - Never emit a whole file in one call. Create it with mode "create", then extend it with mode "append" a few
@@ -147,10 +158,18 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
     )
   }
 
+  if (ctx.plan && ctx.plan.length > 0) {
+    sections.push(
+      "The plan already written for this project (`.imurun/PLAN.md`). Continue it rather than starting over; " +
+        "check a step against the real files before trusting it, and tick it with the plan tool when it is " +
+        `done:\n${bullets(ctx.plan)}`,
+    )
+  }
+
   if (ctx.todos && ctx.todos.length > 0) {
     sections.push(
-      "The current plan (the same list the user sees; tick each step off with the todo tool as soon as it is " +
-        `really finished, and re-plan with action=plan when it changes):\n${bullets(ctx.todos)}`,
+      "Open todos (the same list the user sees; tick each one off with the todo tool as soon as it is really " +
+        `finished, and re-plan with action=plan when it changes):\n${bullets(ctx.todos)}`,
     )
   }
 
