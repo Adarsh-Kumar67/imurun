@@ -9,7 +9,7 @@
  */
 import { z } from "zod"
 import { ImurunConfig, type ImurunConfigInput } from "@imurun/schema"
-import { deepMerge, logger, parseJsonc, readText, writeJsonAtomic } from "@imurun/util"
+import { deepMerge, isPlainObject, logger, parseJsonc, readText, writeJsonAtomic } from "@imurun/util"
 import { discoverConfigs, globalConfigPath, type DiscoveredConfig } from "./discovery"
 
 export interface LoadedConfig {
@@ -118,6 +118,46 @@ export async function loadConfigSafe(
 export async function saveGlobalConfig(config: ImurunConfigInput): Promise<string> {
   const path = globalConfigPath()
   await writeJsonAtomic(path, config)
+  return path
+}
+
+/**
+ * Merges a patch into the global config file, leaving every other key alone.
+ * Used for small edits made from the UI (adding a provider, remembering the
+ * chosen model) that must not flatten the rest of the user's configuration.
+ */
+export async function patchGlobalConfig(patch: ImurunConfigInput): Promise<string> {
+  const path = globalConfigPath()
+  let existing: Record<string, unknown> = {}
+  try {
+    existing = migrateLegacyConfig(await readConfigFile(path))
+  } catch {
+    // No file yet, or unreadable: start from what we were given.
+    existing = {}
+  }
+  await writeJsonAtomic(path, deepMerge(existing, patch as Record<string, unknown>))
+  return path
+}
+
+/**
+ * Removes one entry from a record-valued section of the global config — used to
+ * forget a provider without rewriting (and thereby flattening) everything else.
+ */
+export async function removeGlobalConfigEntry(section: string, key: string): Promise<string> {
+  const path = globalConfigPath()
+  let existing: Record<string, unknown>
+  try {
+    existing = migrateLegacyConfig(await readConfigFile(path))
+  } catch {
+    return path
+  }
+  const entries = existing[section]
+  if (isPlainObject(entries) && key in entries) {
+    const next = { ...entries }
+    delete next[key]
+    existing = { ...existing, [section]: next }
+    await writeJsonAtomic(path, existing)
+  }
   return path
 }
 

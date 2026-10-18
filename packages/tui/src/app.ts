@@ -21,6 +21,7 @@ import {
   ImurunDatabase,
   MemoryStore,
   PermissionManager,
+  PROVIDER_PRESETS,
   ProviderRegistry,
   SessionStore,
   ToolRegistry,
@@ -28,12 +29,17 @@ import {
   clearRagCache,
   defaultAgent,
   getAgent,
+  getProviderPreset,
   getRagIndex,
   getSkill,
   loadAgents,
   loadConfigSafe,
   loadSkills,
+  patchGlobalConfig,
   primaryAgents,
+  probeProvider,
+  providerModelOptions,
+  removeGlobalConfigEntry,
   restrictToolRegistry,
   subagents,
   syncSkillPack,
@@ -41,6 +47,7 @@ import {
 import type {
   AgentEvent,
   PermissionRequest,
+  ProviderPreset,
   SkillDefinition,
   SubagentRequest,
   SubagentResult,
@@ -64,6 +71,7 @@ import type {
   ImurunConfig,
   InstalledModel,
   PermissionMode,
+  ProviderConfig,
   QuantType,
   Session,
 } from "@imurun/schema"
@@ -132,6 +140,8 @@ interface InputModal {
   kind: "input"
   question: string
   hint: string
+  /** Hides what is typed — used for API keys and other secrets. */
+  secret?: boolean
   resolve: (value: string | null) => void
   saved: string
   savedCursor: number
@@ -449,19 +459,43 @@ export class TuiApp {
     this.scheduleRender()
   }
 
-  /** Reads a single line through an in-frame modal. */
-  async ask(question: string): Promise<string> {
-    return new Promise<string>((resolve) => {
+  /** Reads a single line through an in-frame modal. Esc resolves to null. */
+  async ask(question: string, options: { secret?: boolean; hint?: string } = {}): Promise<string | null> {
+    return new Promise<string | null>((resolve) => {
       this.modal = {
         kind: "input",
         question,
-        hint: "enter accepts \u00b7 esc cancels",
+        hint: options.hint ?? "enter accepts \u00b7 esc goes back",
+        secret: options.secret,
         saved: this.input,
         savedCursor: this.inputCursor,
-        resolve: (value) => resolve(value ?? ""),
+        resolve,
       }
       this.input = ""
       this.inputCursor = 0
+      this.render()
+    })
+  }
+
+  /**
+   * Opens a picker and waits for the choice. Resolves with undefined when the
+   * user presses Esc, which is what lets a wizard step go back a step.
+   */
+  private pick(
+    title: string,
+    items: PaletteItem[],
+    footer = "enter selects \u00b7 esc goes back",
+  ): Promise<PaletteItem | undefined> {
+    return new Promise((resolve) => {
+      this.overlay = {
+        kind: "pick",
+        title,
+        palette: new Palette(items, { title, maxRows: 10 }),
+        footer,
+        onSelect: (item) => resolve(item),
+        onCancel: () => resolve(undefined),
+        query: "",
+      }
       this.render()
     })
   }
@@ -881,7 +915,10 @@ export class TuiApp {
     if (key.name === "enter") {
       const item = overlay.palette.selected()
       if (item) {
-        this.closePick()
+        // Selecting is not cancelling: drop the overlay and hand over the item
+        // without firing onCancel (an awaiting caller would otherwise see a
+        // cancellation and a selection at the same time).
+        this.overlay = undefined
         overlay.onSelect(item)
       }
       return
@@ -1344,8 +1381,21 @@ export class TuiApp {
   // ── Model + runtime ───────────────────────────────────────────────────────
 
   private async ensureModel(): Promise<boolean> {
-    let installed = await listInstalled()
     const requested = this.modelRef ?? this.agent.model ?? this.session.model ?? this.config.model
+
+    // A cloud model needs no local runtime — the provider and its key are the
+    // whole setup, and bringing up the engine would be wasted work.
+    const cloud = requested ? this.providers.list().find((p) => p.kind === "api" && requested.startsWith(`${p.id}/`)) : undefined
+    if (cloud) {
+      if (cloud.type !== "custom" && !cloud.apiKey) {
+        this.printError(`${cloud.id} has no API key \u2014 /provider to add one`)
+        return false
+      }
+      this.pushNotice(`using ${requested} \u00b7 ${cloud.id}`, "ok")
+      return true
+    }
+
+    let installed = await listInstalled()
 
     if (installed.length === 0) {
       const ok = await this.autoInstall()
@@ -1416,10 +1466,10 @@ export class TuiApp {
     if (this.preloading || this.closed) return
     this.preloading = true
     try {
-      const installed = await listInstalled()
-      if (installed.length === 0) {
-        this.pushNotice("no local model yet \u2014 /model to pick one, or set this machine up now", "warn")
-        this.openModelPicker()
+      // A fresh machine (or a model that has since gone away) gets the wizard
+      // instead of an error: everything needed is decided in one short flow.
+      if (await this.needsSetup()) {
+        await this.setupWizard()
         return
       }
       const ready = await this.ensureModel()
@@ -1431,6 +1481,141 @@ export class TuiApp {
     } finally {
       this.preloading = false
     }
+  }
+
+  /** True when there is no model this machine can actually use right now. */
+  private async needsSetup(): Promise<boolean> {
+    const ref = this.modelRef ?? this.config.model
+    if (!ref) return true
+    const cloud = this.providers.list().find((p) => p.kind === "api" && ref.startsWith(`${p.id}/`))
+    if (cloud) return cloud.type !== "custom" && !cloud.apiKey
+    const installed = await listInstalled()
+    const name = ref.replace(/^local\//, "")
+    return !installed.some((model) => model.modelId === name || model.id === name)
+  }
+
+  // ── Setup wizard ──────────────────────────────────────────────────────────
+
+  /**
+   * `/setup` — asks whether to run models on this machine or online, then takes
+   * the shortest path to a working model. Esc steps back through the questions.
+   */
+  async setupWizard(): Promise<void> {
+    const installed = await listInstalled()
+    const lastLocal = this.lastLocalModel(installed)
+    const cloud = this.providers.list().filter((p) => p.kind === "api")
+    const lastCloud = this.lastCloudRef(cloud)
+
+    const choice = await this.pick(
+      "how should IMURUN run models?",
+      [
+        {
+          id: "local",
+          label: "On this machine",
+          detail: lastLocal
+            ? `use ${lastLocal} \u00b7 private, offline, nothing to pay`
+            : "download a model sized to this machine \u00b7 private, offline, nothing to pay",
+          keywords: "local offline private llama cpp download machine",
+        },
+        {
+          id: "online",
+          label: "An online provider",
+          detail: lastCloud ?? "OpenAI, Anthropic, Google, Groq, NVIDIA, OpenRouter \u2026 paste a key",
+          keywords: "online cloud api provider key openai anthropic google groq nvidia openrouter",
+        },
+      ],
+      "enter selects \u00b7 esc skips setup",
+    )
+
+    if (!choice) {
+      this.pushNotice("setup skipped \u2014 /model or /provider whenever you want", "info")
+      this.openModelPicker()
+      return
+    }
+
+    if (choice.id === "local") {
+      await this.setupLocal(installed, lastLocal)
+      return
+    }
+    await this.setupOnline(lastCloud, () => void this.setupWizard())
+  }
+
+  private lastLocalModel(installed: InstalledModel[]): string | undefined {
+    const ref = (this.modelRef ?? this.config.model ?? "").replace(/^local\//, "")
+    if (!ref) return undefined
+    return installed.find((model) => model.modelId === ref || model.id === ref)?.id
+  }
+
+  private lastCloudRef(providers: ProviderConfig[]): string | undefined {
+    const ref = this.modelRef ?? this.config.model
+    if (!ref) return undefined
+    return providers.some((p) => ref.startsWith(`${p.id}/`)) ? ref : undefined
+  }
+
+  private async setupLocal(installed: InstalledModel[], lastLocal?: string): Promise<void> {
+    if (lastLocal) {
+      await this.setModel(lastLocal)
+      await this.ensureModel()
+      void this.refreshSidebar()
+      this.renderHeader()
+      return
+    }
+
+    if (installed.length > 0) {
+      const item = await this.pick(
+        "choose a model on this machine",
+        installed.map((model) => ({
+          id: model.id,
+          label: model.id,
+          detail: `${model.quant} \u00b7 ${formatBytes(model.sizeBytes)}`,
+          keywords: `${model.modelId} local`,
+        })),
+        "enter uses it \u00b7 esc goes back",
+      )
+      if (!item) {
+        await this.setupWizard()
+        return
+      }
+      await this.setModel(item.id)
+      await this.ensureModel()
+      void this.refreshSidebar()
+      this.renderHeader()
+      return
+    }
+
+    // Nothing installed: pick the best fit for the hardware and install it.
+    const done = await this.autoInstall()
+    if (!done) {
+      this.pushNotice("nothing was installed \u2014 /model to browse the catalog yourself", "warn")
+      return
+    }
+    await this.ensureModel()
+    void this.refreshSidebar()
+    this.renderHeader()
+  }
+
+  private async setupOnline(lastCloud: string | undefined, onBack: () => void): Promise<void> {
+    if (lastCloud) {
+      const choice = await this.pick(
+        "which provider?",
+        [
+          { id: "__last__", label: `Keep using ${lastCloud}`, detail: "the one you used last", keywords: "last keep" },
+          { id: "__new__", label: "Add a different provider", detail: "paste a new key", keywords: "new other add" },
+          { id: "__back__", label: "\u2190 Back", detail: "choose local or online instead", keywords: "back" },
+        ],
+        "enter selects \u00b7 esc goes back",
+      )
+      if (!choice || choice.id === "__back__") {
+        onBack()
+        return
+      }
+      if (choice.id === "__last__") {
+        this.useProviderModel(lastCloud)
+        await this.ensureModel()
+        return
+      }
+    }
+    await this.openProviderPicker(onBack)
   }
 
   private renderHeader(): void {
@@ -1505,15 +1690,50 @@ export class TuiApp {
     const installed = await listInstalled()
     const activeName = this.modelRef?.replace(/^local\//, "")
     const items: PaletteItem[] = installed.map((model) => ({
-      id: model.id,
+      id: `local/${model.modelId}`,
       label: model.modelId === activeName ? `${model.id}  \u25c0 active` : model.id,
       detail: `${model.quant} \u00b7 ${formatBytes(model.sizeBytes)}`,
-      keywords: "local installed",
+      keywords: `local installed ${model.id}`,
+      group: "on this machine",
     }))
 
     items.push({ id: "__download__", label: "Download more models\u2026", detail: "browse the catalog", keywords: "install add" })
     if (installed.length > 0) {
       items.push({ id: "__remove__", label: "Delete an installed model\u2026", detail: "free disk space", keywords: "remove rm" })
+    }
+
+    // Models on configured cloud providers sit above the fold so "which models
+    // did that key give me" is answered by /model itself.
+    for (const provider of this.providers.list()) {
+      if (provider.kind !== "api") continue
+      if (provider.models.length === 0) {
+        items.push({
+          id: `__provider__${provider.id}`,
+          label: `${provider.id}/…`,
+          detail: "fetch this provider's model list",
+          keywords: `${provider.id} api online cloud`,
+          group: "online",
+        })
+        continue
+      }
+      for (const model of provider.models) {
+        const ref = `${provider.id}/${model}`
+        items.push({
+          id: ref,
+          label: ref === this.modelRef ? `${ref}  \u25c0 active` : ref,
+          detail: `on ${provider.id}`,
+          keywords: `${provider.id} api online ${model}`,
+          group: "online",
+        })
+      }
+    }
+    if (items.every((item) => item.group !== "online")) {
+      items.push({
+        id: "__provider__",
+        label: "Add an online provider\u2026",
+        detail: "OpenAI, Anthropic, Google, Groq, NVIDIA, OpenRouter and more",
+        keywords: "provider api cloud key online",
+      })
     }
 
     this.openPicker("select a model", items, (item) => {
@@ -1523,6 +1743,18 @@ export class TuiApp {
       }
       if (item.id === "__remove__") {
         void this.removeCommand([])
+        return
+      }
+      if (item.id === "__provider__") {
+        void this.providerCommand([])
+        return
+      }
+      if (item.id.startsWith("__provider__")) {
+        void this.providerCommand(["list"])
+        return
+      }
+      if (item.id.startsWith("local/")) {
+        void this.setModel(item.id.slice("local/".length))
         return
       }
       void this.setModel(item.id)
@@ -1766,6 +1998,250 @@ export class TuiApp {
     this.resumeSession([action, ...rest].join(" ").trim())
   }
 
+  // ── Providers ─────────────────────────────────────────────────────────────
+
+  /**
+   * `/provider` — add a cloud provider, list what is configured, or remove one.
+   * Adding is a short wizard (key, maybe a URL, then a model) in which Esc steps
+   * back to the previous question rather than dropping the whole thing.
+   */
+  async providerCommand(args: string[]): Promise<void> {
+    const [action = "", ...rest] = args
+    const value = rest.join(" ").trim()
+    if (!action || action === "add") {
+      await this.openProviderPicker()
+      return
+    }
+    if (action === "list" || action === "ls") {
+      this.listProviders()
+      return
+    }
+    if (action === "remove" || action === "rm" || action === "delete") {
+      await this.removeProvider(value)
+      return
+    }
+    const preset = getProviderPreset(action)
+    if (preset) {
+      await this.addProvider(preset)
+      return
+    }
+    this.printError(`Unknown provider "${action}" \u2014 /provider to browse the list`)
+  }
+
+  private async openProviderPicker(onBack?: () => void): Promise<void> {
+    const configured = new Set(Object.values(this.config.providers).map((p) => p.id))
+    const items: PaletteItem[] = PROVIDER_PRESETS.map((preset) => ({
+      id: preset.id,
+      label: preset.label,
+      detail: `${preset.note} \u00b7 ${
+        preset.needsBaseURL ? "you supply the URL and key" : preset.console ? `key from ${preset.console}` : "no key needed"
+      }`,
+      hint: configured.has(preset.id) ? "configured" : undefined,
+      keywords: `${preset.id} ${preset.label} ${preset.type} provider api cloud key`,
+    }))
+    if (onBack) {
+      items.unshift({ id: "__back__", label: "\u2190 Back", detail: "choose local or online instead", keywords: "back" })
+    }
+
+    const item = await this.pick(
+      "add a provider",
+      items,
+      onBack ? "enter selects \u00b7 esc goes back" : "enter selects \u00b7 esc closes",
+    )
+    if (!item || item.id === "__back__") {
+      onBack?.()
+      return
+    }
+    const preset = getProviderPreset(item.id)
+    if (preset) await this.addProvider(preset, onBack)
+  }
+
+  /**
+   * The add-a-provider wizard. Esc steps back one question; Esc on the first
+   * question returns to `onBack` (or to the provider list when there is none).
+   */
+  private async addProvider(preset: ProviderPreset, onBack?: () => void): Promise<void> {
+    const steps: Array<"url" | "key" | "model"> = preset.needsBaseURL ? ["url", "key", "model"] : ["key", "model"]
+    let baseURL = preset.baseURL ?? ""
+    let apiKey = ""
+    let index = 0
+
+    while (index < steps.length) {
+      const step = steps[index]!
+      if (step === "url") {
+        const typed = await this.ask(`Base URL for ${preset.label}`, {
+          hint: "e.g. http://127.0.0.1:8000/v1 \u00b7 esc goes back",
+        })
+        if (typed === null) {
+          await this.stepBack(onBack)
+          return
+        }
+        if (!typed.trim()) {
+          this.printError("a base URL is required for a custom endpoint")
+          continue
+        }
+        baseURL = typed.trim()
+        index++
+        continue
+      }
+
+      if (step === "key") {
+        const hint = preset.keyEnv
+          ? `paste it, or type {env:${preset.keyEnv}} to read the variable \u00b7 create one at ${preset.console}`
+          : "esc goes back"
+        const typed = await this.ask(`API key for ${preset.label}`, { secret: true, hint })
+        if (typed === null) {
+          if (index === 0) {
+            await this.stepBack(onBack)
+            return
+          }
+          index--
+          continue
+        }
+        if (!typed.trim()) this.pushNotice(`${preset.label} will be used without a key`, "warn")
+        apiKey = typed.trim()
+        index++
+        continue
+      }
+
+      // Model step: ask the provider what it has, then remember the choice.
+      const candidate: ProviderConfig = {
+        id: preset.id,
+        kind: "api",
+        type: preset.type,
+        baseURL: baseURL || undefined,
+        apiKey: apiKey || undefined,
+        models: [],
+        enabled: true,
+      }
+      const discoverable = preset.type !== "google" && preset.type !== "anthropic" && Boolean(candidate.baseURL)
+      if (discoverable) this.pushNotice(`asking ${preset.label} which models it has\u2026`, "info")
+      const info = discoverable ? await probeProvider(candidate, this.config) : undefined
+
+      if (info && info.status !== "ready") {
+        this.pushNotice(`${preset.label} did not answer (${info.detail ?? info.status}) \u2014 saving it anyway`, "warn")
+      }
+      const options = providerModelOptions(preset, info)
+      if (options.length === 0) {
+        await this.saveProvider(preset, baseURL, apiKey)
+        return
+      }
+
+      const choice = await this.pick(
+        `model on ${preset.label}`,
+        options.map((id) => ({ id, label: id, keywords: `${id} ${preset.id} model` })),
+        "enter selects and finishes \u00b7 esc goes back",
+      )
+      if (!choice) {
+        index--
+        continue
+      }
+      await this.saveProvider(preset, baseURL, apiKey, choice.id)
+      return
+    }
+  }
+
+  private async stepBack(onBack?: () => void): Promise<void> {
+    if (onBack) onBack()
+    else await this.openProviderPicker()
+  }
+
+  private async saveProvider(
+    preset: ProviderPreset,
+    baseURL: string,
+    apiKey: string,
+    model?: string,
+  ): Promise<void> {
+    const provider: ProviderConfig = {
+      id: preset.id,
+      kind: "api",
+      type: preset.type,
+      baseURL: baseURL || undefined,
+      apiKey: apiKey || undefined,
+      models: model ? [model] : [],
+      enabled: true,
+    }
+    try {
+      await patchGlobalConfig({ providers: { [provider.id]: provider } })
+    } catch (error) {
+      this.printError(`could not save the provider: ${(error as Error).message}`)
+      return
+    }
+    await this.reloadConfig()
+    this.pushNotice(`added ${preset.id}`, "ok")
+    if (model) {
+      this.useProviderModel(`${preset.id}/${model}`)
+    } else {
+      this.pushNotice(`its models are listed under /model once the key is set`, "info")
+    }
+  }
+
+  private listProviders(): void {
+    const all = this.providers.list()
+    this.print()
+    this.print(`  ${theme.bold("Providers")}`)
+    for (const provider of all) {
+      const kind = provider.kind === "local" ? "local" : "cloud"
+      const key = provider.apiKey ? "key set" : provider.kind === "local" ? "" : "no key"
+      const models = provider.models.length > 0 ? `${provider.models.length} models` : "models discovered on use"
+      this.print(
+        `    ${theme.accent(provider.id.padEnd(14))} ${theme.dim(
+          `${kind} \u00b7 ${provider.type} \u00b7 ${key} \u00b7 ${models}`.replace(/ \u00b7 \u00b7 /g, " \u00b7 "),
+        )}`,
+      )
+    }
+    this.print(theme.dim("  /provider adds one \u00b7 /provider remove <id> forgets one \u00b7 /model switches"))
+    this.print()
+  }
+
+  private async removeProvider(id?: string): Promise<void> {
+    const provider = id ? this.providers.get(id) : undefined
+    if (!provider || provider.kind === "local") {
+      this.printError(`No cloud provider "${id ?? ""}" \u2014 /provider list shows them`)
+      return
+    }
+    const answer = (await this.confirm(`remove the ${provider.id} provider?`, "[y/N]")).toLowerCase()
+    if (answer !== "y") {
+      this.print(theme.dim("  kept"))
+      return
+    }
+    try {
+      await removeGlobalConfigEntry("providers", provider.id)
+    } catch (error) {
+      this.printError(`could not update the config: ${(error as Error).message}`)
+      return
+    }
+    await this.reloadConfig()
+    this.pushNotice(`removed ${provider.id}`, "ok")
+  }
+
+  /** Switches to a cloud model: nothing to load, just remember and persist it. */
+  private useProviderModel(ref: string): void {
+    this.modelRef = ref
+    this.sessions.update(this.session.id, { model: ref })
+    void patchGlobalConfig({ model: ref }).catch(() => {})
+    this.pushNotice(`model set to ${ref}`, "ok")
+    this.renderHeader()
+    void this.refreshSidebar()
+  }
+
+  /** Re-reads config from disk and rebuilds everything derived from it. */
+  private async reloadConfig(): Promise<void> {
+    const { loaded } = await loadConfigSafe(this.workingDir)
+    this.config = loaded.config
+    this.providers = new ProviderRegistry(this.config)
+    this.runtime = new RuntimeManager(this.config)
+    const mode = this.permissions.getMode()
+    this.permissions = PermissionManager.withSavedRules(this.database, {
+      rules: this.config.permissions.rules,
+      disabledTools: this.config.disabledTools,
+      mode: this.config.permissions.mode,
+      projectPath: this.workingDir,
+    })
+    this.permissions.setMode(mode)
+    this.renderHeader()
+  }
+
   async setModel(ref?: string): Promise<void> {
     const installed = await listInstalled()
     if (!ref) {
@@ -1773,6 +2249,13 @@ export class TuiApp {
         this.pushNotice("no model installed yet \u2014 pick one to download", "warn")
       }
       this.openModelPicker()
+      return
+    }
+
+    // "provider/model" is a cloud model: nothing to load locally, just remember it.
+    const provider = this.providers.list().find((p) => ref.startsWith(`${p.id}/`) && p.kind === "api")
+    if (provider) {
+      this.useProviderModel(ref)
       return
     }
 
@@ -1817,6 +2300,26 @@ export class TuiApp {
       const size = variant ? ` \u00b7 ~${variant.sizeGB.toFixed(1)} GB` : ""
       this.print(`    ${theme.accent(rec.model.id.padEnd(30))} ${theme.dim(`${rec.recommendedQuant}${size}`)}`)
     }
+
+    // Cloud models, so "which models did that key give me" is answered here.
+    const cloud = this.providers.list().filter((provider) => provider.kind === "api" && provider.enabled)
+    this.print()
+    this.print(`  ${theme.bold("Online providers")}`)
+    if (cloud.length === 0) {
+      this.print(theme.dim("  none \u2014 /provider to add one (OpenAI, Anthropic, Google, Groq, NVIDIA\u2026)"))
+    } else {
+      for (const provider of cloud) {
+        const key = provider.apiKey ? theme.ok("key set") : theme.warn("no key")
+        this.print(`    ${theme.accent(provider.id.padEnd(30))} ${theme.dim(`${key} \u00b7 ${provider.type}`)}`)
+        for (const model of provider.models.slice(0, 6)) {
+          const ref = `${provider.id}/${model}`
+          const active = ref === this.modelRef ? theme.ok(` ${sym.bullet}`) : "  "
+          this.print(`      ${active} ${theme.dim(ref)}`)
+        }
+        if (provider.models.length > 6) this.print(theme.dim(`        \u2026 ${provider.models.length - 6} more`))
+      }
+    }
+
     this.print(theme.dim("  /model opens the picker \u00b7 /model <id> switches directly \u00b7 /remove <id> deletes"))
     this.print()
   }
@@ -2612,7 +3115,9 @@ export class TuiApp {
       const tone = modal.kind === "confirm" ? "warn" : "info"
       const color = tone === "warn" ? theme.warn : theme.accent
       const question =
-        modal.kind === "input" ? `${modal.question} ${theme.muted(this.input)}` : theme.bold(modal.question)
+        modal.kind === "input"
+          ? `${modal.question} ${theme.muted(modal.secret ? "\u2022".repeat(Math.min(this.input.length, 48)) : this.input)}`
+          : theme.bold(modal.question)
       return fitVisible(`  ${color("?")} ${question} ${theme.dim(modal.hint)}`, width)
     }
 

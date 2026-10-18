@@ -56,6 +56,22 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "provider",
+    summary: "Add a cloud provider (OpenAI, Anthropic, Google, Groq, NVIDIA, OpenRouter\u2026)",
+    usage: "/provider [list|remove <id>|<id>]",
+    run(app, args) {
+      return app.providerCommand(args)
+    },
+  },
+  {
+    name: "setup",
+    aliases: ["wizard", "onboard"],
+    summary: "Choose where models run: this machine or online",
+    run(app) {
+      return app.setupWizard()
+    },
+  },
+  {
     name: "clear",
     summary: "Clear the screen",
     run(app) {
