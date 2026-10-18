@@ -1650,47 +1650,54 @@ export class TuiApp {
     this.pushNotice(`new session ${this.session.id.slice(0, 12)}\u2026`, "ok")
   }
 
+  /** Opens a picker of recent sessions; choosing one resumes into it. */
   listSessions(): void {
-    const list = this.sessions.list({ limit: 15, workingDir: this.workingDir })
+    const list = this.sessions.list({ limit: 20, workingDir: this.workingDir })
     this.lastSessionList = list.map((s) => ({ id: s.id, title: s.title, model: s.model, updatedAt: s.updatedAt }))
-    this.print()
     if (list.length === 0) {
-      this.print(theme.dim("  no sessions yet"))
-      this.print()
+      this.pushNotice("no sessions yet", "info")
       return
     }
-    this.print(`  ${theme.bold("Recent sessions")}`)
-    list.forEach((s, index) => {
-      const current = s.id === this.session.id ? theme.ok(` ${sym.bullet}`) : "  "
-      this.print(
-        `  ${theme.accent(String(index + 1).padStart(2))}.${current} ${s.title} ` +
-          theme.dim(`\u00b7 ${s.id.slice(0, 12)}\u2026 \u00b7 ${s.model ?? "no model"} \u00b7 ${formatTimestamp(s.updatedAt)}`),
-      )
-    })
-    this.print(theme.dim("  resume with /resume <number-or-id>"))
-    this.print()
+    this.openPicker(
+      "sessions",
+      list.map((s, index) => ({
+        id: s.id,
+        label: s.title || "untitled",
+        detail:
+          `${s.id.slice(0, 12)}\u2026 \u00b7 ${s.model ?? "no model"} \u00b7 ${s.messageCount} messages \u00b7 ` +
+          `${formatTimestamp(s.updatedAt)}${s.id === this.session.id ? " \u00b7 current" : ""}`,
+        hint: String(index + 1),
+        keywords: `${s.id} ${s.title} ${s.model ?? ""} session resume`,
+      })),
+      (item) => this.resumeSession(item.id),
+      "enter resumes \u00b7 esc closes",
+    )
   }
 
   private lastSessionList: SessionListItem[] = []
+
+  /** Resolves a session from a list number, a full id, or an id prefix. */
+  private resolveSession(ref?: string): Session | undefined {
+    if (!ref) return undefined
+    const index = Number(ref)
+    if (Number.isInteger(index) && index >= 1 && index <= this.lastSessionList.length) {
+      const id = this.lastSessionList[index - 1]!.id
+      return id ? this.sessions.get(id) : undefined
+    }
+    const id = this.sessions
+      .list({ limit: 200, workingDir: this.workingDir })
+      .find((s) => s.id === ref || s.id.startsWith(ref))?.id
+    return id ? this.sessions.get(id) : undefined
+  }
 
   resumeSession(ref?: string): void {
     if (!ref) {
       this.listSessions()
       return
     }
-    let id: string | undefined
-    const index = Number(ref)
-    if (Number.isInteger(index) && index >= 1 && index <= this.lastSessionList.length) {
-      id = this.lastSessionList[index - 1]!.id
-    } else {
-      id = this.sessions
-        .list({ limit: 200, workingDir: this.workingDir })
-        .find((s) => s.id === ref || s.id.startsWith(ref))?.id
-    }
-
-    const session = id ? this.sessions.get(id) : undefined
+    const session = this.resolveSession(ref)
     if (!session) {
-      this.printError(`No session matches "${ref}" \u2014 /sessions to list them`)
+      this.printError(`No session matches "${ref}" \u2014 /session to list them`)
       return
     }
 
@@ -1705,6 +1712,58 @@ export class TuiApp {
       if (message.role === "user") this.pushBlock({ kind: "user", text })
       else if (message.role === "assistant") this.pushBlock({ kind: "assistant", text: firstLine(text, 200) })
     }
+  }
+
+  renameSession(title?: string): void {
+    const next = title?.trim()
+    if (!next) {
+      this.printError("usage: /session rename <new title>")
+      return
+    }
+    this.sessions.update(this.session.id, { title: next })
+    this.session = this.sessions.get(this.session.id) ?? this.session
+    this.pushNotice(`renamed this session to \u201c${next}\u201d`, "ok")
+  }
+
+  deleteSession(ref?: string): void {
+    const target = this.resolveSession(ref)
+    if (!target) {
+      this.printError(`No session matches "${ref ?? ""}" \u2014 /session to list them`)
+      return
+    }
+    const wasCurrent = target.id === this.session.id
+    this.sessions.delete(target.id)
+    this.pushNotice(
+      `deleted session ${target.id.slice(0, 12)}\u2026${wasCurrent ? " \u2014 it was the one you were in" : ""}`,
+      "ok",
+    )
+    if (wasCurrent) this.newSession()
+  }
+
+  /**
+   * `/session` — one entry point for sessions: no argument opens the picker,
+   * `rename`/`delete`/`new` act on them, and a bare reference resumes.
+   */
+  sessionCommand(args: string[]): void {
+    const [action = "", ...rest] = args
+    const value = rest.join(" ").trim()
+    if (!action || action === "list" || action === "ls") {
+      this.listSessions()
+      return
+    }
+    if (action === "rename") {
+      this.renameSession(value)
+      return
+    }
+    if (action === "delete" || action === "rm" || action === "remove") {
+      this.deleteSession(value)
+      return
+    }
+    if (action === "new") {
+      this.newSession()
+      return
+    }
+    this.resumeSession([action, ...rest].join(" ").trim())
   }
 
   async setModel(ref?: string): Promise<void> {

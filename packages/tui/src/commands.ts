@@ -47,18 +47,12 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
-    name: "sessions",
-    summary: "List recent sessions",
-    run(app) {
-      app.listSessions()
-    },
-  },
-  {
-    name: "resume",
-    summary: "Resume a session by number or id",
-    usage: "/resume <number|id>",
+    name: "session",
+    summary: "Pick, rename, delete or resume a session",
+    usage: "/session [list|rename <title>|delete <ref>|new|<number|id>]",
+    aliases: ["sessions", "resume"],
     run(app, args) {
-      app.resumeSession(args[0])
+      app.sessionCommand(args)
     },
   },
   {
