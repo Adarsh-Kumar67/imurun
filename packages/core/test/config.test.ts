@@ -110,4 +110,17 @@ describe("config merging", () => {
     expect(config.model).toBe("b")
     expect(config.rag.autoInject).toBe(false)
   })
+
+  test("an old-style permissions array still loads as rules", async () => {
+    const { home } = setupWorkspace()
+    const path = join(home, "legacy.json")
+    writeFileSync(path, JSON.stringify({ permissions: [{ tool: "shell", action: "deny" }] }))
+
+    const { config } = await loadFromDiscovered([{ path, scope: "project" }])
+
+    expect(config.permissions.rules).toHaveLength(1)
+    expect(config.permissions.rules[0]!.tool).toBe("shell")
+    // and the approval mode is the new default
+    expect(config.permissions.mode).toBe("auto")
+  })
 })

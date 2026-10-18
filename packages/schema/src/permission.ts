@@ -46,9 +46,20 @@ export const MUTATING_TOOLS: readonly string[] = ["shell", "write", "edit", "scr
 
 /**
  * How permission prompts are handled for the session.
- *   manual   — ask before anything that changes the machine (the default)
- *   auto     — allow everything the config does not explicitly deny
+ *   auto     — run every tool without asking (the default; the fastest way to work)
+ *   manual   — ask before anything that changes the machine
  *   readonly — allow inspection only; refuse anything that mutates
  */
 export const PermissionMode = z.enum(["manual", "auto", "readonly"])
 export type PermissionMode = z.infer<typeof PermissionMode>
+
+/**
+ * The `permissions` section of the config: how calls are approved, plus any
+ * rules. Approval defaults to `auto` so a fresh install is usable without a
+ * stream of prompts; `/permission` (or `mode` here) switches it.
+ */
+export const PermissionsConfig = z.object({
+  mode: PermissionMode.default("auto"),
+  rules: z.array(PermissionRule).default([]),
+})
+export type PermissionsConfig = z.infer<typeof PermissionsConfig>

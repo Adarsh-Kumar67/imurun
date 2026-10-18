@@ -47,6 +47,17 @@ async function readConfigFile(path: string): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Older configs wrote `permissions` as a bare array of rules. Accept that shape
+ * and fold it into the current one instead of failing validation.
+ */
+function migrateLegacyConfig(input: Record<string, unknown>): Record<string, unknown> {
+  if (Array.isArray(input.permissions)) {
+    return { ...input, permissions: { rules: input.permissions } }
+  }
+  return input
+}
+
 /** Loads and validates the effective configuration for a working directory. */
 export async function loadConfig(
   cwd: string,
@@ -71,6 +82,7 @@ export async function loadFromDiscovered(
   }
 
   merged = deepMerge(merged, overrides as Record<string, unknown>)
+  merged = migrateLegacyConfig(merged)
 
   const result = ImurunConfig.safeParse(merged)
   if (!result.success) {

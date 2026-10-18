@@ -319,7 +319,7 @@ describe("agent loop", () => {
       sessions: h.sessions,
       providers: h.providers,
       tools: h.tools,
-      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [], mode: "manual" }),
       config: h.config,
       onPermission: async () => false, // user says no
     })
@@ -340,7 +340,7 @@ describe("agent loop", () => {
     server.close()
   })
 
-  test("without an interactive handler, ask-tools are denied by default", async () => {
+  test("in manual mode without a handler, ask-tools are denied", async () => {
     const argsJson = JSON.stringify({ path: "x.txt", content: "nope" })
     const server = startFakeServer([toolCallScript("call_1", "write", argsJson), textScript("ok")])
 
@@ -351,9 +351,9 @@ describe("agent loop", () => {
       sessions: h.sessions,
       providers: h.providers,
       tools: h.tools,
-      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [], mode: "manual" }),
       config: h.config,
-      // no onPermission handler
+      // no onPermission handler, and the mode asks first
     })
 
     await agent.run({ sessionId: session.id, input: "write a file", workingDir: h.workingDir })
@@ -361,6 +361,29 @@ describe("agent loop", () => {
     expect(existsSync(join(h.workingDir, "x.txt"))).toBe(false)
     const toolMessage = h.sessions.getMessages(session.id).find((m) => m.role === "tool")
     expect(toolMessage?.content).toContain("--yes")
+    h.store.close()
+    server.close()
+  })
+
+  test("permission defaults to auto: tools run with no handler and no prompt", async () => {
+    const argsJson = JSON.stringify({ path: "auto.txt", content: "allowed" })
+    const server = startFakeServer([toolCallScript("call_1", "write", argsJson), textScript("Wrote it.")])
+
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      // deliberately no onPermission handler
+    })
+
+    await agent.run({ sessionId: session.id, input: "write a file", workingDir: h.workingDir, verifyChanges: false })
+
+    expect(existsSync(join(h.workingDir, "auto.txt"))).toBe(true)
     h.store.close()
     server.close()
   })

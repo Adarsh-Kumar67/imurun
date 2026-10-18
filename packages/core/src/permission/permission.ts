@@ -3,12 +3,16 @@
  *
  * Decision order:
  *   1. disabled tools (config.disabledTools)          → deny
- *   2. explicit config rules / saved rules (first match) → allow | ask | deny
- *   3. AUTO_ALLOW_TOOLS                                → allow
- *   4. ALWAYS_ASK_TOOLS and everything else            → ask
+ *   2. mode "auto"                                     → allow
+ *   3. mode "readonly" + a mutating tool                → deny
+ *   4. explicit config rules / saved rules (first match) → allow | ask | deny
+ *   5. AUTO_ALLOW_TOOLS                                → allow
+ *   6. ALWAYS_ASK_TOOLS and everything else            → ask
  *
- * "ask" outcomes are surfaced to the caller (TUI dialog in interactive mode,
- * auto-approve with --yes in non-interactive mode).
+ * The mode defaults to "auto", so a fresh install runs without a prompt for
+ * every call; `/permission` (or `permissions.mode`) turns the prompts back on.
+ * "ask" outcomes are surfaced to the caller — a TUI dialog in interactive mode,
+ * or a refusal when there is no handler and --yes was not given.
  */
 import type { PermissionDecision, PermissionMode, PermissionRule } from "@imurun/schema"
 import { AUTO_ALLOW_TOOLS, ALWAYS_ASK_TOOLS, MUTATING_TOOLS, PermissionAction } from "@imurun/schema"
@@ -24,6 +28,8 @@ export interface PermissionRequest {
 export interface PermissionRuleSet {
   rules: PermissionRule[]
   disabledTools: string[]
+  /** Approval mode; defaults to "auto" so a fresh run does not prompt for everything. */
+  mode?: PermissionMode
   /** Project path rules are scoped to; saved rules use it. */
   projectPath?: string
 }
@@ -42,7 +48,7 @@ export class PermissionManager {
   private rules: PermissionRule[]
   private disabledTools: Set<string>
   private projectPath: string | undefined
-  private mode: PermissionMode = "manual"
+  private mode: PermissionMode = "auto"
 
   constructor(
     private readonly store: ImurunDatabase | undefined,
@@ -51,6 +57,7 @@ export class PermissionManager {
     this.rules = [...ruleSet.rules]
     this.disabledTools = new Set(ruleSet.disabledTools)
     this.projectPath = ruleSet.projectPath
+    this.mode = ruleSet.mode ?? "auto"
   }
 
   /** The session's approval mode (see PermissionMode). */

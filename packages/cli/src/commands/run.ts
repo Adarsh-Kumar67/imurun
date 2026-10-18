@@ -112,8 +112,9 @@ export const runCommand: Command = {
     const providers = new ProviderRegistry(config)
     const baseTools = ToolRegistry.default()
     const permissions = PermissionManager.withSavedRules(store, {
-      rules: config.permissions,
+      rules: config.permissions.rules,
       disabledTools: config.disabledTools,
+      mode: config.permissions.mode,
       projectPath: workingDir,
     })
 

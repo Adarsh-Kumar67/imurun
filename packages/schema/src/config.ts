@@ -5,7 +5,7 @@
  * Project config: ./imurun.json or ./.imurun/imurun.json (merged over global)
  */
 import { z } from "zod"
-import { PermissionRule } from "./permission"
+import { PermissionsConfig } from "./permission"
 import { ProviderConfig } from "./provider"
 import { ProviderType } from "./provider"
 
@@ -113,7 +113,7 @@ export const ImurunConfig = z.object({
   rag: RagConfig.prefault({}),
   tui: TuiConfig.prefault({}),
   web: WebConfig.prefault({}),
-  permissions: z.array(PermissionRule).default([]),
+  permissions: PermissionsConfig.prefault({}),
   /** Tool names disabled entirely for this project. */
   disabledTools: z.array(z.string()).default([]),
   /** Extra instructions appended to the system prompt. */

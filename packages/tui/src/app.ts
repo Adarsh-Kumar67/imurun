@@ -306,8 +306,9 @@ export class TuiApp {
     this.providers = new ProviderRegistry(this.config)
     this.runtime = new RuntimeManager(this.config)
     this.permissions = PermissionManager.withSavedRules(this.database, {
-      rules: this.config.permissions,
+      rules: this.config.permissions.rules,
       disabledTools: this.config.disabledTools,
+      mode: this.config.permissions.mode,
       projectPath: this.workingDir,
     })
     this.commands = createCommandRegistry()
@@ -1955,8 +1956,8 @@ export class TuiApp {
   // ── Permissions ───────────────────────────────────────────────────────────
 
   private static readonly PERMISSION_MODES: Array<{ id: PermissionMode; label: string; detail: string }> = [
-    { id: "manual", label: "Manual", detail: "ask before writing files or running commands (default)" },
-    { id: "auto", label: "Auto-approve", detail: "run every tool without asking \u2014 fastest, least safe" },
+    { id: "auto", label: "Auto-approve", detail: "run every tool without asking (default) \u2014 fastest" },
+    { id: "manual", label: "Manual", detail: "ask before writing files or running commands" },
     { id: "readonly", label: "Read-only", detail: "look, search and read \u2014 never change anything" },
   ]
 
@@ -2097,8 +2098,9 @@ export class TuiApp {
     this.database = await ImurunDatabase.openProject(this.workingDir)
     this.sessions = new SessionStore(this.database)
     this.permissions = PermissionManager.withSavedRules(this.database, {
-      rules: this.config.permissions,
+      rules: this.config.permissions.rules,
       disabledTools: this.config.disabledTools,
+      mode: this.config.permissions.mode,
       projectPath: this.workingDir,
     })
 

@@ -16,7 +16,17 @@ describe("config schema", () => {
     expect(config.runtime.port).toBe(42425)
     expect(config.rag.enabled).toBe(true)
     expect(config.memory.learnStyle).toBe(true)
-    expect(config.permissions).toEqual([])
+    // approval defaults to auto, with no rules
+    expect(config.permissions.mode).toBe("auto")
+    expect(config.permissions.rules).toEqual([])
+  })
+
+  test("the permission mode can be set, and rules are kept", () => {
+    const config = ImurunConfig.parse({
+      permissions: { mode: "manual", rules: [{ tool: "shell", action: "ask" }] },
+    })
+    expect(config.permissions.mode).toBe("manual")
+    expect(config.permissions.rules).toHaveLength(1)
   })
 
   test("partial config merges over defaults", () => {
