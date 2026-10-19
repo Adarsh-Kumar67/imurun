@@ -64,6 +64,7 @@ export const BUILTIN_ROLES: Record<string, RoleSpec> = {
       "Write the plan down with the plan tool when the job takes more than a couple of steps, then work the list.",
       "Make the smallest change that does the job, in the style of the surrounding code, and keep unrelated refactors out.",
       "Write a whole file in one call when you can, and use shell when a command is the better way to produce it. If a call is cut off before it lands, create the file with the first section and append the rest \u2014 the write tool says when what landed looks unfinished.",
+      "The shell is a POSIX one on every platform: grep, sed, cat, head, tail, awk, find, pipes and && all work, so a one-liner is a good way to search, slice, or transform files the dedicated tools do not cover.",
       "Run the build, the test, or the command that proves the change, and re-read what you changed.",
       "Tell the user what changed (with paths), what you ran, and what the result was.",
     ],

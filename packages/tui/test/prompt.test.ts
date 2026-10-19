@@ -110,4 +110,30 @@ describe("buildPromptBox", () => {
     const box = buildPromptBox({ input: "", cursor: 0, width: 20, placeholder: "ask anything at all here" })
     expect(box.layout[0]!.start).toBe(0)
   })
+
+  test("grows with the draft up to the limit, then scrolls inside the box", () => {
+    const short = buildPromptBox({ input: "one\ntwo\nthree", cursor: 13, width: 30, maxRows: 7 })
+    expect(short.rows).toBe(3)
+    expect(short.lines).toHaveLength(5) // top border + 3 rows + bottom border
+
+    const long = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n")
+    const grown = buildPromptBox({ input: long, cursor: long.length, width: 30, maxRows: 7 })
+    // the box stops growing: it keeps its height and the text scrolls within it
+    expect(grown.rows).toBe(7)
+    expect(grown.lines).toHaveLength(9)
+    // the caret's line is the last one shown, where the caret actually is
+    expect(grown.cursor.row).toBe(7)
+    expect(grown.layout.map((entry) => entry.line)).toEqual([5, 6, 7, 8, 9, 10, 11])
+    expect(stripAnsi(grown.lines[7]!)).toContain("line 12")
+    // and every drawn line still fits the box exactly
+    for (const line of grown.lines) expect(visibleWidth(line)).toBe(30)
+  })
+
+  test("scrolls back up inside the box when the caret moves up", () => {
+    const long = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n")
+    // caret at the very start: the first lines are shown, not the last
+    const box = buildPromptBox({ input: long, cursor: 0, width: 30, maxRows: 7 })
+    expect(box.layout.map((entry) => entry.line)).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(box.cursor.row).toBe(1)
+  })
 })

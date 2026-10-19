@@ -12,7 +12,7 @@
  */
 import { streamText, type LanguageModelUsage, type ModelMessage } from "ai"
 import type { ContentPart, ImurunConfig, ToolCall, ToolResult } from "@imurun/schema"
-import { createLogger, imurunDir, type Logger } from "@imurun/util"
+import { createLogger, imurunDir, resolveShell, type Logger } from "@imurun/util"
 import type { SessionStore } from "../session/session"
 import { buildSystemPrompt } from "../session/system-prompt"
 import { ProviderRegistry, type ResolvedModel } from "../provider/registry"
@@ -342,6 +342,12 @@ export class Agent {
     if (toolNames.has("web_search")) capabilities.push("search the internet and read web pages (these fail cleanly when offline)")
     if (memoryOn) capabilities.push("store and recall durable memory across sessions")
     if (toolNames.has("shell")) {
+      const shell = resolveShell()
+      capabilities.push(
+        shell.posix
+          ? `run commands in ${shell.label} \u2014 a POSIX shell, so grep, sed, cat, head, tail, pipes and && work as they do on Linux and macOS`
+          : `run commands in ${shell.label}, the only shell on this machine (no grep/sed/cat unless they are installed)`,
+      )
       capabilities.push("open files, folders, applications and web links with the platform opener")
       capabilities.push("start long-running commands (servers, watchers) in the background")
     }

@@ -90,8 +90,16 @@ and also marks the RAG index stale.
 
 ## shell
 
-Run a command through the platform shell (PowerShell or `cmd` on Windows, the
-user's shell or `/bin/sh` elsewhere) in the project directory.
+Run a command through a real shell in the project directory.
+
+IMURUN runs commands in a **POSIX** shell wherever one exists: the `bash` that
+ships with Git for Windows, or `$SHELL`/`/bin/sh` on macOS and Linux. That means
+`grep`, `sed`, `cat`, `head`, `tail`, `awk`, `find`, pipes, `&&` and `$VAR`
+behave exactly as they do on Linux and macOS, which is what a coding model writes
+by default. Only a machine with no POSIX shell installed at all falls back to
+`cmd`; when that happens the tool description says so, so the model stops
+reaching for tools that are not there. On Windows the Microsoft Store's `bash`
+alias (which raises WSL) is never used — only a real shell is.
 
 | Argument | Type | Notes |
 | --- | --- | --- |
@@ -105,6 +113,12 @@ is clipped to **100000 characters**, keeping the head and the tail; the return
 value includes stdout, stderr, and the exit code. With `background: true` the
 command is detached and nothing is captured — this is what makes it usable for
 dev servers, watchers, and opening applications or URLs.
+
+Paths inside the shell are POSIX ones. Git bash maps its mounts into place, so
+the Windows temp directory shows up as `/tmp` and `C:\Users\you\proj` as
+`/c/Users/you/proj`; a `pwd` therefore prints the POSIX form of the directory the
+tool was given. The tool's own `workdir` argument accepts whatever the rest of
+IMURUN accepts — Windows or POSIX style.
 
 ## glob
 

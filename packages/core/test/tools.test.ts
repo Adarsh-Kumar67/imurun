@@ -1,8 +1,8 @@
 import { describe, expect, test, beforeEach } from "bun:test"
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { createLogger } from "@imurun/util"
+import { join, basename } from "node:path"
+import { createLogger, resolveShell } from "@imurun/util"
 import { readTool, writeTool, editTool, shellTool, globTool, grepTool } from "../src/tool"
 import type { ToolContext } from "../src/tool/types"
 
@@ -261,31 +261,61 @@ describe("grep tool", () => {
 })
 
 describe("shell tool", () => {
+  // The tool runs commands in a POSIX shell wherever one exists (Git bash on
+  // Windows), so the tests speak POSIX and only branch when they must.
+  const shell = resolveShell()
+
   test("runs commands and captures stdout", async () => {
-    const command = process.platform === "win32" ? "echo hello-imurun" : "echo hello-imurun"
-    const result = await shellTool.execute({ command }, ctx)
+    const result = await shellTool.execute({ command: "echo hello-imurun" }, ctx)
     expect(result.ok).toBe(true)
     expect(result.output).toContain("hello-imurun")
   })
 
   test("reports non-zero exit codes", async () => {
-    const command = process.platform === "win32" ? "exit /b 3" : "exit 3"
+    const command = shell.posix ? "exit 3" : "exit /b 3"
     const result = await shellTool.execute({ command }, ctx)
     expect(result.ok).toBe(false)
     expect(result.output).toContain("exit code 3")
   })
 
   test("times out long commands", async () => {
-    const command = process.platform === "win32" ? "ping -n 6 127.0.0.1 >nul" : "sleep 5"
+    const command = shell.posix ? "sleep 5" : "ping -n 6 127.0.0.1 >nul"
     const result = await shellTool.execute({ command, timeoutMs: 800 }, ctx)
     expect(result.ok).toBe(false)
     expect(result.output).toContain("timed out")
   }, 10_000)
 
   test("runs in the working directory", async () => {
-    const command = process.platform === "win32" ? "cd" : "pwd"
+    const command = shell.posix ? "pwd" : "cd"
     const result = await shellTool.execute({ command }, ctx)
     expect(result.ok).toBe(true)
-    expect(result.output.toLowerCase()).toContain(dir.toLowerCase())
+    // Git bash reports Windows paths through its own mounts (Temp shows as
+    // /tmp), so compare the directory name the shell was handed rather than
+    // the whole path.
+    expect(result.output.trim().endsWith(basename(dir))).toBe(true)
+  })
+
+  test("the description tells the model which shell it gets", () => {
+    expect(shellTool.description).toContain(shell.label)
+    if (shell.posix) expect(shellTool.description).toContain("grep")
+  })
+
+  test("uses the shell's own toolset, not cmd, when one is available", async () => {
+    if (!shell.posix) return
+    // Pipes, grep and sed in one command: the shape a coding model writes.
+    const result = await shellTool.execute(
+      { command: "printf 'alpha\\nbeta\\ngamma\\n' | grep -n 'mm' | sed 's/gamma/matched/'" },
+      ctx,
+    )
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("matched")
+    expect(result.output).not.toContain("/b")
+  })
+
+  test("variables, command substitution and && all work", async () => {
+    if (!shell.posix) return
+    const result = await shellTool.execute({ command: 'name="imurun" && echo "hi $name from $(echo shell)"' }, ctx)
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("hi imurun from shell")
   })
 })

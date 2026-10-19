@@ -256,6 +256,17 @@ describe("composeFrame", () => {
     expect(frame.lines[9]).toContain("hello")
   })
 
+  test("a taller prompt box takes its rows from the transcript, not the status line", () => {
+    const transcript = Array.from({ length: 40 }, (_, i) => `line ${i}`)
+    const oneRow = composeFrame({ ...base, transcript, prompt: ["P"] })
+    const fourRows = composeFrame({ ...base, transcript, prompt: ["P", "P", "P", "P"] })
+    // the transcript gives up exactly the rows the box gained
+    expect(oneRow.viewportRows - fourRows.viewportRows).toBe(3)
+    // and the status line is still the final row in both
+    expect(fourRows.lines[fourRows.lines.length - 1]!.trim()).toBe("status")
+    expect(fourRows.lines[fourRows.lines.length - 2]!.trim()).toBe("P")
+  })
+
   test("clamps the caret inside the frame", () => {
     const frame = composeFrame({ ...base, height: 3, header: ["H"], transcript: [], overlay: [] })
     expect(frame.cursor.row).toBeLessThanOrEqual(3)
