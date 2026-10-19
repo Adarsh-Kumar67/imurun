@@ -15,6 +15,7 @@
  * same in cmd.exe, Windows Terminal, and Unix terminals.
  */
 import { existsSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { resolve as resolvePath } from "node:path"
 import {
   Agent,
@@ -85,9 +86,10 @@ import type {
   QuantType,
   Session,
 } from "@imurun/schema"
-import { formatBytes, formatDuration, formatTimestamp, openInSystem, setLogLevel } from "@imurun/util"
+import { formatBytes, formatDuration, formatTimestamp, openInSystem, setLogLevel, copyToClipboard } from "@imurun/util"
 import { agentSwitchLine, caret as caretGlyph, ellipsis, progress as animProgress, spinnerFrame } from "./animate"
 import { createCommandRegistry } from "./commands"
+import { collectCodeBlocks, latestAnswer } from "./copy"
 import { KeyParser, type KeyEvent, type MouseEvent } from "./keys"
 import { creditLine, renderWordmark, welcomeLines } from "./logo"
 import { Palette, type PaletteItem } from "./palette"
@@ -2919,6 +2921,76 @@ export class TuiApp {
       this.print(theme.dim("  /memory <query> searches it \u00b7 /compact folds older turns into the summary to free context"))
     }
     this.print()
+  }
+
+  /**
+   * `/copy` — get text out of the chat and into the clipboard.
+   *
+   * A terminal owns its own selection (shift+drag, or the terminal's own
+   * copy key), and nothing IMURUN can do improves on that for a few lines the
+   * user can see. What a terminal cannot do is hand over a long code block
+   * without dragging across a scrolling transcript, so the command exists for
+   * exactly that: `/copy` takes the last answer, `/copy <n>` takes the n-th
+   * newest code block, and `/copy list` names them.
+   */
+  async copyCommand(args: string[]): Promise<void> {
+    const sub = args[0]?.toLowerCase()
+
+    if (sub === "list") {
+      const blocks = collectCodeBlocks(this.blocks)
+      this.print()
+      this.print(`  ${theme.bold("Copyable code blocks")}`)
+      if (blocks.length === 0) this.print(theme.dim("    none yet \u2014 write or show some code first"))
+      else {
+        for (const block of blocks.slice(0, 20)) {
+          const lines = block.text.split("\n").length
+          this.print(
+            `    ${theme.accent(String(block.index).padStart(2))} ${block.label}${theme.dim(` \u00b7 ${lines} line${lines === 1 ? "" : "s"}${block.lang ? ` \u00b7 ${block.lang}` : ""}`)}`,
+          )
+        }
+        if (blocks.length > 20) this.print(theme.dim(`    \u2026 and ${blocks.length - 20} older`))
+      }
+      this.print(theme.dim("  /copy <n> copies one \u00b7 /copy copies the last answer"))
+      this.print()
+      return
+    }
+
+    if (sub) {
+      const n = Number.parseInt(sub, 10)
+      if (!Number.isInteger(n) || n < 1) {
+        this.printError("usage: /copy [list | <n>] \u2014 /copy with no number copies the last answer")
+        return
+      }
+      const block = collectCodeBlocks(this.blocks).find((entry) => entry.index === n)
+      if (!block) {
+        this.printError(`no code block ${n} \u2014 /copy list shows what is there`)
+        return
+      }
+      await this.copyOut(block.text, `${block.label} (block ${n})`)
+      return
+    }
+
+    const answer = latestAnswer(this.blocks)
+    if (!answer) {
+      this.pushNotice("nothing to copy yet", "warn")
+      return
+    }
+    await this.copyOut(answer, "the last answer")
+  }
+
+  /** Sends text to the clipboard, and says plainly where it went. */
+  private async copyOut(text: string, what: string): Promise<void> {
+    const bytes = Buffer.byteLength(text, "utf8")
+    const result = await copyToClipboard(text, { fallbackDir: tmpdir() })
+    if (result.ok) {
+      this.pushNotice(`copied ${what} (${formatBytes(bytes)}) to the clipboard \u00b7 ${result.via}`, "ok")
+      return
+    }
+    if (result.fallbackPath) {
+      this.pushNotice(`no clipboard tool here \u2014 wrote ${what} to ${result.fallbackPath}`, "warn")
+      return
+    }
+    this.pushNotice(`could not copy ${what}: ${result.error ?? "unknown error"}`, "error")
   }
 
   /**

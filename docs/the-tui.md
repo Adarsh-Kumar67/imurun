@@ -121,6 +121,7 @@ any subagent, skill chip, or queue indicator, ending with `esc interrupts`.
 | `Ctrl+C` twice | Exit (the second press within 1.5 seconds). |
 | mouse wheel | Scroll the transcript. |
 | mouse click in the prompt | Place the caret where you clicked. |
+| `Shift` + drag | The terminal's own text selection, left alone on purpose. |
 
 ## Scrolling and reading back
 
@@ -128,6 +129,14 @@ Scrolling is pinned to the line you are reading: output that arrives while you
 are looking back appears below the fold instead of pushing the text you were
 reading off the screen. `PgDn`, `End`, or `Esc` returns you to the live end. The
 status row doubles as the jump-to-newest affordance while you are scrolled back.
+
+## Copying out of the chat
+
+Selecting with `Shift`+drag (or the terminal's own copy key) always works —
+IMURUN leaves the terminal's selection alone. What a terminal cannot do is hand
+over a code block that has scrolled away, so [`/copy`](slash-commands.md#copy)
+takes the last answer or a numbered code block and puts it on the clipboard,
+writing it to a file instead when the machine has no clipboard tool.
 
 ## Queueing messages
 

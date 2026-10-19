@@ -978,4 +978,50 @@ describe("what the agent brings into a turn", () => {
     h.store.close()
     server.close()
   })
+
+  test("a personal fact survives into the next session's prompt", async () => {
+    const server = startFakeServer([textScript("Noted."), textScript("You are Shubham.")])
+    const h = await harness(server.url)
+    const memory = new MemoryStore()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      memory,
+    })
+
+    // Session A: the user mentions themselves in passing. Nothing is asked.
+    const first = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+    await agent.run({
+      sessionId: first.id,
+      input: "By the way, my name is Shubham and I work at ImuTechz.",
+      workingDir: h.workingDir,
+      onEvent,
+    })
+
+    // It said so at the time, and the note is on disk.
+    expect(events.some((event) => event.type === "notice" && /noted/i.test((event as { text: string }).text))).toBe(
+      true,
+    )
+    expect((await memory.all()).some((note) => note.kind === "fact" && /Shubham/.test(note.text))).toBe(true)
+
+    // Session B: a different session, a fresh start, the same memory store.
+    const second = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    await agent.run({
+      sessionId: second.id,
+      input: "What is my name?",
+      workingDir: h.workingDir,
+    })
+
+    const system = (server.requests[1]!.messages as Array<{ role: string; content: string }>).find(
+      (message) => message.role === "system",
+    )
+    expect(system?.content).toContain("Shubham")
+    h.store.close()
+    server.close()
+  })
 })

@@ -185,6 +185,15 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "copy",
+    summary: "Copy the last answer, or a code block, to the clipboard",
+    usage: "/copy [list | <n>]",
+    aliases: ["yank"],
+    run(app, args) {
+      return app.copyCommand(args)
+    },
+  },
+  {
     name: "compact",
     summary: "Free context now: fold older turns into the session summary",
     usage: "/compact",

@@ -147,6 +147,7 @@ from slash commands (press `Tab` to complete, `/help` for the list):
 /new  /sessions       start or resume sessions (/resume <n|id>)
 /cwd  /status         show or change the working directory · full status
 /memory [query]       what IMURUN remembers · search it
+/copy [list | <n>]    copy the last answer, or a code block, to the clipboard
 /compact              free context: fold older turns into the session summary
 /rag [status|index|search <q>|clear]   the code index
 /permission [auto|manual|readonly]     who approves tool calls

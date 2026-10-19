@@ -33,6 +33,7 @@ aliases.
 | `/permission` | `/permissions`, `/approve` | Choose how tool calls are approved (`auto`, `manual`, `read-only`). | `/permission [auto\|manual\|readonly]` |
 | `/queue` | — | Show, edit, drop, or clear messages queued behind the current turn. | `/queue [edit <n>\|drop <n>\|clear]` |
 | `/memory` | — | Show what IMURUN remembers, or search it. | `/memory [query]` |
+| `/copy` | `/yank` | Copy the last answer, or a numbered code block, to the clipboard. | `/copy [list \| <n>]` |
 | `/compact` | — | Free context now: fold older turns into the session summary. | `/compact` |
 | `/tools` | — | List the tools available to the current agent. | `/tools` |
 | `/cwd` | — | Show or change the working directory. | `/cwd [path]` |
@@ -96,3 +97,19 @@ of the side panel. See [RAG](rag.md).
 
 `/runtime` (or `/runtime status`) shows whether the local runtime is running and
 its engines; `/runtime stop` stops it and frees RAM. See [Runtime](runtime.md).
+
+### `/copy`
+
+Getting text out of the chat. A terminal already has a selection — hold `Shift`
+and drag, or use the terminal's own copy key — and that keeps working here.
+
+`/copy` is for the case a terminal cannot help with: a long block of code that
+has scrolled away. `/copy` with no argument copies the model's last answer;
+`/copy 3` copies the third-newest code block (either one shown in a reply or one
+IMURUN previewed when writing a file); `/copy list` names them all with line
+counts so you can pick.
+
+The text goes to the platform's clipboard (`clip` on Windows, `pbcopy` on macOS,
+`wl-copy`/`xclip`/`xsel` on Linux). If the machine has none of those, IMURUN
+writes the text to a file in the temp directory and says where — the copy never
+silently fails, and never silently "succeeds".
