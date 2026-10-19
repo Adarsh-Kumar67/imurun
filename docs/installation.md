@@ -17,6 +17,27 @@ that, see [Local models](local-models.md).
   offline-first and sends no telemetry. Every dependency it ships is free and
   open source.
 
+## Platforms
+
+IMURUN runs on Windows, macOS, and Linux, and the CI matrix runs the type
+checker and the test suite on all three, so a platform-specific break is caught
+on the platform it breaks.
+
+Everything platform-specific resolves at run time, in one place
+(`packages/util/src/platform.ts`):
+
+| Concern | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Shell the `shell` tool uses | Git Bash if installed, then `bash` on PATH, then `cmd` | `$SHELL`, else `/bin/sh` | `$SHELL`, else `/bin/sh` |
+| Opening a file or link | `cmd /c start` | `open` | `xdg-open` |
+| Screenshot | PowerShell + .NET | `screencapture` | `grim`, `scrot`, `gnome-screenshot`, `spectacle`, or `import` |
+| Clipboard for `/copy` | `clip` | `pbcopy` | `wl-copy`, `xclip`, or `xsel` |
+| Engine builds | Vulkan, CUDA, or CPU | Metal or CPU | Vulkan, CUDA, ROCm, or CPU |
+
+On macOS, `bun` installs with `brew install oven-sh/bun/bun`; on Linux, with the
+official install script or your package manager. Nothing else differs: the same
+commands, the same files under `~/.imurun`, and the same catalog of models.
+
 ## Option 1 — install from npm
 
 ```bash
