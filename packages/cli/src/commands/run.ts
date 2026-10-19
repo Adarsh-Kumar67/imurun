@@ -184,6 +184,17 @@ export const runCommand: Command = {
             wroteText = false
           }
           break
+        case "reasoning":
+          // Thinking is not the answer, so it goes to stderr as a quiet hint —
+          // piped output stays clean.
+          if (!quiet) process.stderr.write(chalk.gray(event.delta))
+          break
+        case "notice":
+          if (!quiet) {
+            const tone = event.tone === "warn" ? chalk.yellow : chalk.gray
+            process.stderr.write(`\n  ${tone("·")} ${tone(event.text)}\n`)
+          }
+          break
         case "tool-unrecognised":
           if (!quiet) {
             process.stderr.write(`\n  ${chalk.yellow("⚠")} the model asked for an unknown tool\n`)

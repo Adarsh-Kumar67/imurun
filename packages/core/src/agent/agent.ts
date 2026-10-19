@@ -21,6 +21,8 @@ import type { ToolContext } from "../tool/types"
 import { PermissionManager, type PermissionRequest } from "../permission/permission"
 import { assembleModelMessages, planCompaction, planHistoryChars } from "./context"
 import { DEFAULT_CONTEXT_WINDOW, MAX_MESSAGE_CHARS } from "./context"
+import { ThinkSplitter } from "./think-splitter"
+import { supportsReasoningEffort } from "../provider/registry"
 import {
   isPendingToolCall,
   isToolCallAttempt,
@@ -41,6 +43,11 @@ export type AgentEvent =
   | { type: "step-start"; step: number }
   | { type: "text"; delta: string }
   /**
+   * The model's thinking, as it arrives. Kept apart from the answer so the UI
+   * can show it collapsed; it is never mixed into the displayed message.
+   */
+  | { type: "reasoning"; delta: string }
+  /**
    * The displayable text for the current step is exactly this — sent when text
    * that had already been shown turns out to be part of a tool-call payload and
    * must be taken back.
@@ -48,6 +55,8 @@ export type AgentEvent =
   | { type: "text-reset"; text: string }
   /** The model tried to call a tool that does not exist (or was cut off). */
   | { type: "tool-unrecognised"; detail: string }
+  /** Something worth telling the user that is not part of the answer. */
+  | { type: "notice"; text: string; tone?: "info" | "warn" }
   | { type: "skill"; id: string; name: string }
   /** History had to be folded into a summary to fit the window. */
   | { type: "compacted"; droppedMessages: number; keptMessages: number; reason: "budget" | "overflow" | "manual" }
@@ -177,6 +186,19 @@ function isContextOverflow(error: unknown): boolean {
 function isTruncatedToolCall(error: unknown): boolean {
   return /invalid tool input|unexpected end of json|unexpected end of input|json parse|unterminated/i.test(
     errorMessage(error),
+  )
+}
+
+/**
+ * True when a provider refused the request because of the reasoning-effort
+ * value. These come back as a 400 before anything is generated, which is what
+ * makes it safe to retry with a different level.
+ */
+function isEffortRejection(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase()
+  return (
+    /reasoning[_ ]?effort|thinking[_ ]?(effort|level)/.test(message) &&
+    /(invalid|unsupported|unknown|not supported|unexpected|400|unrecognized)/.test(message)
   )
 }
 
@@ -401,6 +423,9 @@ export class Agent {
     // Multistep discipline: remember what this turn changed and whether anything
     // looked at it afterwards, so the agent checks its own work before finishing.
     const verifyChanges = run.verifyChanges ?? true
+    // The thinking-effort knob, only when this provider takes one. A provider
+    // that rejects the value steps it down (see the retry below).
+    let effort = config.reasoningEffort && supportsReasoningEffort(resolved.provider) ? config.reasoningEffort : undefined
     const changedFiles = new Map<string, number>()
     let lastInspectionStep = 0
     let verifications = 0
@@ -416,6 +441,9 @@ export class Agent {
       let guardIndex: number | undefined
       /** How far the guard has scanned; a prefix scanned clear stays clear. */
       let scanFrom = 0
+      /** The model's thinking for this step, kept apart from the answer. */
+      let reasoning = ""
+      const think = new ThinkSplitter()
       const toolCalls: ToolCall[] = []
       let stepUsage: AgentUsage = zeroUsage()
       let streamError: Error | undefined
@@ -444,12 +472,24 @@ export class Agent {
             tools: aiTools,
             abortSignal: run.signal,
             maxRetries: 1,
+            // The effort knob only goes to providers that take one, and under
+            // the provider's own name, so the SDK turns it into the right body
+            // field rather than an unknown parameter.
+            ...(effort ? { providerOptions: { [resolved.provider.id]: { reasoningEffort: effort } } } : {}),
           })
 
           for await (const part of result.fullStream) {
             switch (part.type) {
               case "text-delta": {
-                text += part.text
+                // Reasoning that arrives inline (a ` think` block in the text
+                // stream) is pulled out here, so it never reaches the answer.
+                const split = think.push(part.text)
+                if (split.reasoning) {
+                  reasoning += split.reasoning
+                  run.onEvent?.({ type: "reasoning", delta: split.reasoning })
+                }
+                if (!split.text) break
+                text += split.text
                 // Hold back anything from the point a tool-call payload could
                 // begin, so a near-miss JSON blob is never streamed to the user
                 // as though it were an answer. The rest flows through normally.
@@ -464,6 +504,13 @@ export class Agent {
                   streamedLength = limit
                   run.onEvent?.({ type: "text", delta: pending })
                 }
+                break
+              }
+              case "reasoning-delta": {
+                // Providers with a separate thinking channel (and local engines
+                // that report reasoning_content).
+                reasoning += part.text
+                run.onEvent?.({ type: "reasoning", delta: part.text })
                 break
               }
               case "tool-call":
@@ -485,6 +532,15 @@ export class Agent {
                 break
             }
           }
+
+          // Anything the splitter was still holding — a partial tag, or a think
+          // block the model never closed — lands before the step is judged.
+          const tail = think.flush()
+          if (tail.reasoning) {
+            reasoning += tail.reasoning
+            run.onEvent?.({ type: "reasoning", delta: tail.reasoning })
+          }
+          if (tail.text) text += tail.text
         } catch (error) {
           streamError = error instanceof Error ? error : new Error(String(error))
         }
@@ -494,6 +550,20 @@ export class Agent {
         if (streamError && isContextOverflow(streamError) && attempt < MAX_CONTEXT_RETRIES) {
           this.log.warn(`request exceeded the context window — compacting and retrying (attempt ${attempt + 1})`)
           await compact("overflow")
+          continue
+        }
+        // A provider that does not know the requested effort level refuses the
+        // request before generating anything. Step the level down once, then
+        // give up on the knob — the user is told either way.
+        if (streamError && effort && isEffortRejection(streamError)) {
+          const next = effort === "max" ? "high" : undefined
+          const note =
+            next === undefined
+              ? `${resolved.provider.id} does not support reasoning effort — continuing without it.`
+              : `${resolved.provider.id} rejected reasoning effort "${effort}" — trying "${next}".`
+          this.log.warn(note)
+          run.onEvent?.({ type: "notice", text: note, tone: "info" })
+          effort = next
           continue
         }
         // A tool call cut off mid-payload (a `write` that ran past the output

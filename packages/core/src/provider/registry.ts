@@ -93,6 +93,17 @@ export function createLanguageModel(provider: ProviderConfig, modelId: string, c
   }
 }
 
+/**
+ * True when a provider accepts a `reasoning_effort` on the request. Local
+ * engines take their thinking behaviour from the chat template, and the
+ * dedicated SDK providers need their own knobs, so only the OpenAI-compatible
+ * APIs count here — which is also what `/effort` reports.
+ */
+export function supportsReasoningEffort(provider: ProviderConfig): boolean {
+  if (provider.kind !== "api") return false
+  return provider.type !== "anthropic" && provider.type !== "google"
+}
+
 /** Checks whether a local/provider endpoint is reachable. */
 export async function probeProvider(provider: ProviderConfig, config: ImurunConfig): Promise<ProviderInfo> {
   if (!provider.enabled) {

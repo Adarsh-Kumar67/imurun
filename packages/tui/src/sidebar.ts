@@ -25,6 +25,8 @@ export interface SidebarState {
   permissions: string
   /** Estimated context usage for the active session. */
   context?: { used: number; max: number }
+  /** Thinking effort, shown only when the provider accepts one. */
+  effort?: string
   /** Steps of the written plan (`.imurun/PLAN.md`), when there is one. */
   plan?: { done: number; total: number }
   /** The plan, in the order it should be shown. */
@@ -115,6 +117,9 @@ export function sidebarLines(state: SidebarState): string[] {
 
   lines.push(title("model", width))
   lines.push(value(theme.accent(state.model ?? "none"), width))
+  // How hard the model is asked to think — only shown when an effort is set
+  // and the provider takes one, so it never promises what it cannot send.
+  if (state.effort) lines.push(value(theme.muted(`effort ${state.effort}`), width))
   lines.push(blank(width))
 
   lines.push(title("permissions", width))

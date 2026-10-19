@@ -112,6 +112,15 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "effort",
+    aliases: ["reasoning"],
+    summary: "Set how hard the model thinks (low/medium/high/max)",
+    usage: "/effort [low|medium|high|max]",
+    run(app, args) {
+      return app.effortCommand(args)
+    },
+  },
+  {
     name: "install",
     summary: "Download a model from the catalog (shows disk impact)",
     usage: "/install [model-id] [quant]",

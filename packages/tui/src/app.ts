@@ -45,6 +45,7 @@ import {
   removeGlobalConfigEntry,
   restrictToolRegistry,
   subagents,
+  supportsReasoningEffort,
   syncSkillPack,
   todoCounts,
   todoGlyph,
@@ -92,7 +93,7 @@ import { Palette, type PaletteItem } from "./palette"
 import { buildPromptBox, caretPosition, promptRowCount } from "./prompt"
 import { estimateToolMs, progressPhrase, progressWords } from "./progress"
 import { MessageQueue, formatQueue } from "./queue"
-import { composeFrame, renderTranscript, type Block, type Tone } from "./render"
+import { composeFrame, reasoningRanges, renderTranscript, type Block, type Tone } from "./render"
 import { Screen } from "./screen"
 import { sidebarLines, type SidebarState, type SidebarTodo } from "./sidebar"
 import { parseSlash, type ParsedSlash, type SlashRegistry } from "./slash"
@@ -249,7 +250,19 @@ export class TuiApp {
     promptRows: number
     promptTextRows: number
     promptLayout: Array<{ line: number; start: number }>
+    /** The status row (frame bottom): the "jump to newest" click target. */
+    statusRow: number
+    /** First transcript line visible in the viewport (for block hit-testing). */
+    viewportTop: number
+    /** How many transcript lines the viewport shows. */
+    viewportRows: number
   }
+  /** Which transcript line ranges belong to collapsible reasoning blocks. */
+  private reasoningRanges: Array<{ index: number; start: number; end: number }> = []
+  /** The thinking block currently streaming, if any. */
+  private liveReasoning?: { index: number; startedAt: number }
+  /** Which reasoning blocks the user has expanded. */
+  private readonly expandedReasoning = new Set<number>()
   private renderTimer?: ReturnType<typeof setTimeout>
   private spinnerTimer?: ReturnType<typeof setInterval>
   private spinnerTick = 0
@@ -562,6 +575,17 @@ export class TuiApp {
     }
     if (event.kind !== "press") return
     if (this.modal || this.overlay) return
+    // The status row doubles as the "jump to newest" button while reading back.
+    if (this.scroll > 0 && event.y === this.frameLayout?.statusRow) {
+      this.scroll = 0
+      this.scrollAnchor = undefined
+      this.render()
+      return
+    }
+    if (this.toggleReasoningClick(event.x, event.y)) {
+      this.render()
+      return
+    }
     if (this.placeCaretFromClick(event.x, event.y)) this.render()
   }
 
@@ -679,6 +703,12 @@ export class TuiApp {
       this.scrollBy(-8)
       return
     }
+    if (key.name === "end") {
+      // Jump to the newest output — the keyboard twin of the "newest ↓" click.
+      this.scroll = 0
+      this.scrollAnchor = undefined
+      return
+    }
 
     if (key.name === "enter") {
       this.submit()
@@ -743,7 +773,17 @@ export class TuiApp {
     const maxTop = Math.max(this.transcriptLineCount - rows, 0)
     const currentTop = this.scrollAnchor ?? maxTop
     const next = Math.min(Math.max(currentTop - delta, 0), maxTop)
-    this.scrollAnchor = next >= maxTop ? undefined : next
+    // The count comes from the last frame, and output may have landed since.
+    // Reaching (or passing) that stale bottom therefore means "follow the log
+    // again": both the anchor and the derived scroll distance have to clear,
+    // or the next frame pins itself `scroll` lines above the newest output and
+    // never catches up.
+    if (next >= maxTop) {
+      this.scrollAnchor = undefined
+      this.scroll = 0
+      return
+    }
+    this.scrollAnchor = next
   }
 
   /** Moves the caret one display line up or down inside a multi-line draft. */
@@ -1184,6 +1224,11 @@ export class TuiApp {
     const onEvent = (event: AgentEvent): void => {
       this.touchActivity()
       switch (event.type) {
+        case "step-start":
+          // A new model↔tool round: the previous step's thinking is finished,
+          // and the next delta opens a fresh block.
+          this.closeReasoning()
+          break
         case "text":
           this.appendAssistant(event.delta)
           break
@@ -1191,6 +1236,12 @@ export class TuiApp {
           // Text already on screen turned out to be part of a tool call; take it
           // back rather than leaving a half-written JSON blob in the transcript.
           this.resetAssistant(event.text)
+          break
+        case "reasoning":
+          this.appendReasoning(event.delta)
+          break
+        case "notice":
+          this.pushNotice(event.text, event.tone ?? "info")
           break
         case "tool-unrecognised":
           this.pushNotice(
@@ -1228,6 +1279,9 @@ export class TuiApp {
         }
         case "tool-start": {
           this.finalizeStreaming()
+          // Thinking for this step is over once a tool runs — from here the
+          // phase line speaks, not the model.
+          this.closeReasoning()
           const args = (typeof event.args === "object" && event.args !== null ? event.args : {}) as Record<string, unknown>
           this.toolArgs.set(event.callId, args)
           const label = event.title ?? event.name
@@ -1346,6 +1400,56 @@ export class TuiApp {
     }
     this.transcriptVersion++
     this.scheduleRender()
+  }
+
+  /**
+   * Streams the model's thinking into a collapsible block. Collapsed it is one
+   * line — the words move, the height never jumps; the text is all there when
+   * the user expands it.
+   */
+  private appendReasoning(delta: string): void {
+    if (!this.liveReasoning || !this.blocks[this.liveReasoning.index]) {
+      this.pushBlock({ kind: "reasoning", text: "", live: true })
+      this.liveReasoning = { index: this.blocks.length - 1, startedAt: Date.now() }
+    }
+    const block = this.blocks[this.liveReasoning.index]
+    if (block?.kind === "reasoning") block.text += delta
+    this.transcriptVersion++
+    this.scheduleRender()
+  }
+
+  /** Ends the live thinking block and stamps how long it took. */
+  private closeReasoning(): void {
+    const live = this.liveReasoning
+    if (!live) return
+    this.liveReasoning = undefined
+    const block = this.blocks[live.index]
+    if (block?.kind === "reasoning") {
+      block.live = false
+      block.seconds = Math.max(Math.round((Date.now() - live.startedAt) / 1000), 1)
+      // Keep it expanded if the user opened it while it streamed.
+      block.expanded = this.expandedReasoning.has(live.index)
+    }
+    this.transcriptVersion++
+  }
+
+  /** A click on a thinking block toggles it; true when the click was on one. */
+  private toggleReasoningClick(_x: number, y: number): boolean {
+    const layout = this.frameLayout
+    if (!layout || layout.viewportRows <= 0) return false
+    // Body rows run to the prompt box; the viewport is their last band.
+    const viewportFirstRow = layout.promptTop - layout.viewportRows
+    if (y < viewportFirstRow) return false
+    const line = layout.viewportTop + (y - viewportFirstRow)
+    const hit = this.reasoningRanges.find((range) => line >= range.start && line <= range.end)
+    if (!hit) return false
+    const block = this.blocks[hit.index]
+    if (block?.kind !== "reasoning") return false
+    block.expanded = !block.expanded
+    if (block.expanded) this.expandedReasoning.add(hit.index)
+    else this.expandedReasoning.delete(hit.index)
+    this.transcriptVersion++
+    return true
   }
 
   /**
@@ -3018,12 +3122,23 @@ export class TuiApp {
       maxRows: promptRowCount(this.input, MAX_INPUT_ROWS),
       placeholder: this.statusHint || "ask anything \u2014 or type / for commands",
       hint: this.promptHint(),
+      // The caret's place in the draft, on the box's bottom edge: it moves with
+      // typing, the arrow keys, and a click, which is what makes the box feel
+      // like a real editor rather than a single invisible line.
+      position: this.modal?.kind === "input" ? undefined : this.inputPosition(),
       tone: this.modal?.kind === "input" ? "normal" : this.busy ? "busy" : this.queue.pending ? "queued" : "normal",
       paint: (text) => (this.input.startsWith("/") || this.modal?.kind === "input" ? theme.accent(text) : text),
     })
 
     const transcript = this.transcriptLines(contentWidth)
     this.transcriptLineCount = transcript.length
+    // Where the collapsible thinking blocks landed, so a click on their line
+    // can be mapped back — computed with the same renderer, so it stays exact.
+    this.reasoningRanges = reasoningRanges(this.blocks, contentWidth, {
+      caret: caretGlyph(this.spinnerTick),
+      tick: this.spinnerTick,
+      now: Date.now(),
+    })
 
     const frame = composeFrame({
       width,
@@ -3054,6 +3169,9 @@ export class TuiApp {
       promptRows: box.lines.length,
       promptTextRows: box.rows,
       promptLayout: box.layout,
+      statusRow: rows,
+      viewportTop: frame.viewTop,
+      viewportRows: frame.viewportRows,
     }
 
     screen.draw(frame.lines, frame.cursor)
@@ -3066,6 +3184,54 @@ export class TuiApp {
     return undefined
   }
 
+  /** The caret's 1-based line and column in the draft, for the prompt box. */
+  private inputPosition(): string {
+    const { row, col } = caretPosition(this.input, this.inputCursor)
+    return `Ln ${row + 1}, Col ${col + 1}`
+  }
+
+  /**
+   * The configured effort, but only when the model's provider actually takes
+   * one — the panel must never promise a knob that would not be sent.
+   */
+  private effortLabel(): string | undefined {
+    const effort = this.config.reasoningEffort
+    if (!effort) return undefined
+    const providerId = this.modelRef?.split("/")[0]
+    const provider = providerId ? this.providers.get(providerId) : undefined
+    return provider && supportsReasoningEffort(provider) ? effort : undefined
+  }
+
+  /** `/effort` — how hard the model is asked to think before it answers. */
+  async effortCommand(args: string[]): Promise<void> {
+    const levels = ["low", "medium", "high", "max"] as const
+    const value = args[0]?.toLowerCase()
+
+    if (!value) {
+      const current = this.effortLabel()
+      this.print()
+      this.print(`  ${theme.bold("Effort")}  ${current ? theme.accent(current) : theme.dim("default (provider chooses)")}`)
+      if (!current && this.config.reasoningEffort) {
+        this.print(theme.dim(`  set to ${this.config.reasoningEffort}, but this provider does not take an effort`))
+      }
+      this.print(theme.dim(`  /effort <${levels.join("|")}>`))
+      this.print(theme.dim("  higher effort thinks longer and uses more tokens; max steps down automatically"))
+      this.print(theme.dim("  if the provider rejects it"))
+      this.print()
+      return
+    }
+
+    if (!levels.includes(value as (typeof levels)[number])) {
+      this.printError(`unknown effort "${args[0]}" \u2014 use one of: ${levels.join(", ")}`)
+      return
+    }
+
+    await patchGlobalConfig({ reasoningEffort: value as (typeof levels)[number] })
+    const { loaded } = await loadConfigSafe(this.workingDir)
+    this.config = loaded.config
+    this.pushNotice(`reasoning effort \u00b7 ${value}`, "ok")
+  }
+
   private sidebarState(width: number): SidebarState {
     return {
       width,
@@ -3075,6 +3241,7 @@ export class TuiApp {
       workingDir: this.workingDir,
       permissions: this.permissions.getMode(),
       context: { used: this.contextUsed, max: this.contextMax },
+      effort: this.effortLabel(),
       todos: this.todos,
       plan: this.plan ? planCounts(this.plan.steps) : undefined,
       queue: this.queue.size,
@@ -3412,6 +3579,15 @@ export class TuiApp {
     }
 
     if (this.installLine) return fitVisible(this.installLine, width)
+
+    // Reading back: the jump affordance takes the status row, so it is always
+    // drawn (never clipped like the overlay) and the whole row is clickable.
+    if (this.scroll > 0) {
+      const label = theme.dim(`${this.scroll} line${this.scroll === 1 ? "" : "s"} below \u2014 `) +
+        theme.accent("\u2193 newest") + theme.dim(" \u00b7 End or click")
+      const pad = Math.max(width - visibleWidth(label) - 2, 0)
+      return `${" ".repeat(pad)}${label}`
+    }
 
     const spin = theme.accent(spinnerFrame(this.spinnerTick))
 

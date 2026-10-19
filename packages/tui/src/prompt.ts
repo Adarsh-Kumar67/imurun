@@ -19,6 +19,8 @@ export interface PromptBoxOptions {
   placeholder?: string
   /** Right-aligned on the top border, e.g. "esc to interrupt". */
   hint?: string
+  /** Right-aligned on the bottom border, e.g. "Ln 2, Col 5". */
+  position?: string
   /** Styling applied to the text region; must not change its visible length. */
   paint?: (text: string) => string
   tone?: "normal" | "busy" | "queued"
@@ -122,8 +124,13 @@ export function buildPromptBox(options: PromptBoxOptions): PromptBox {
   const top =
     border("\u256d\u2500") + theme.dim(title) + border("\u2500".repeat(dashes)) + theme.dim(hintText) + border("\u256e")
 
-  // bottom border: ╰────────────────╯
-  const bottom = border(`\u2570${"\u2500".repeat(Math.max(0, width - 2))}\u256f`)
+  // bottom border: ╰──────────────── Ln 2, Col 5 ╯
+  // The caret's exact line and column, so the position line answers "where am
+  // I" at a glance and moves with every edit, arrow key, and click.
+  let positionText = options.position ? ` ${options.position} ` : ""
+  if (width - 2 - visibleWidth(positionText) < 6) positionText = ""
+  const bottomDashes = Math.max(0, width - 2 - visibleWidth(positionText))
+  const bottom = border(`\u2570${"\u2500".repeat(bottomDashes)}`) + theme.dim(positionText) + border("\u256f")
 
   return {
     lines: [top, ...textRows, bottom],

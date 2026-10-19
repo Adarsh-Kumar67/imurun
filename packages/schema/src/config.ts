@@ -100,12 +100,22 @@ export type WebConfig = z.infer<typeof WebConfig>
 
 export const DefaultProviderPriority: readonly z.infer<typeof ProviderType>[] = ["llama-cpp", "ollama"] as const
 
+/**
+ * How hard a model is asked to think before it answers. `max` is deliberately
+ * the same knob as `high` on most APIs; it means "do not hold back" rather than
+ * a separately-defined level, so sending it is safe everywhere `high` works.
+ */
+export const ReasoningEffort = z.enum(["low", "medium", "high", "max"])
+export type ReasoningEffort = z.infer<typeof ReasoningEffort>
+
 export const ImurunConfig = z.object({
   $schema: z.string().optional(),
   /** Default model ID, e.g. "qwen2.5-coder-7b". */
   model: z.string().optional(),
   /** Small fast model for titles/summaries, e.g. "qwen2.5-coder-1.5b". */
   smallModel: z.string().optional(),
+  /** Thinking budget sent to providers that take a `reasoning_effort`. */
+  reasoningEffort: ReasoningEffort.optional(),
   /** Provider definitions, keyed by provider id. */
   providers: z.record(z.string(), ProviderConfig).default({}),
   runtime: RuntimeConfig.prefault({}),

@@ -16,7 +16,11 @@ export type Block =
   /** `state` marks a message that is queued ("pending") or taken back ("undone"). */
   | { kind: "user"; text: string; state?: "pending" | "undone" }
   | { kind: "assistant"; text: string; streaming?: boolean }
-  | { kind: "reasoning"; text: string }
+  /**
+   * The model's thinking. Collapsed by default to one line ("thinking · 12s");
+   * a click (or /thinking) expands it in place while it keeps streaming.
+   */
+  | { kind: "reasoning"; text: string; expanded?: boolean; seconds?: number; live?: boolean }
   | {
       kind: "tool"
       title: string
@@ -88,8 +92,25 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
     }
 
     case "reasoning": {
+      const seconds = block.seconds ?? 0
+      const label = `thinking \u00b7 ${seconds}s`
+      const head =
+        `  ${theme.accent(block.expanded ? sym.chevronDown : sym.chevronRight)} ` +
+        theme.dim(block.expanded ? label : `${label} \u2014 click to expand`)
+      if (!block.expanded) {
+        // While it is streaming, the collapsed line shows how far it has got
+        // rather than nothing: the words change, the line never jumps around.
+        if (block.live) {
+          const words = block.text.trim().split(/\s+/).filter(Boolean)
+          const tail = words.slice(-5).join(" ")
+          return [clampVisible(`${head} ${theme.muted(tail ? `\u00b7 ${tail}` : "")}`, width)]
+        }
+        return [clampVisible(head, width)]
+      }
       const wrapped = wrapText(block.text, Math.max(width - 4, 8))
-      return wrapped.map((line) => clampVisible(`  ${theme.dim(line)}`, width))
+      const lines = [clampVisible(head, width)]
+      for (const line of wrapped) lines.push(clampVisible(`    ${theme.dim(line)}`, width))
+      return lines
     }
 
     case "tool": {
@@ -170,6 +191,33 @@ export function renderTranscript(blocks: Block[], width: number, options: Render
     lines.push(...rendered)
   }
   return lines
+}
+
+export interface BlockRange {
+  /** Index into the blocks array. */
+  index: number
+  /** First transcript line the block occupies (0-based, inclusive). */
+  start: number
+  /** Last transcript line (inclusive). */
+  end: number
+}
+
+/**
+ * Where each collapsible reasoning block lands in the flattened transcript, so
+ * a click on its line can be mapped back to the block. Ranges are computed
+ * with the same renderer that draws the transcript, so they stay exact even
+ * while a block is growing or another collapses.
+ */
+export function reasoningRanges(blocks: Block[], width: number, options: RenderOptions = {}): BlockRange[] {
+  const ranges: BlockRange[] = []
+  let line = 0
+  for (const [index, block] of blocks.entries()) {
+    const rendered = renderBlock(block, width, options)
+    if (rendered.length === 0) continue
+    if (block.kind === "reasoning") ranges.push({ index, start: line, end: line + rendered.length - 1 })
+    line += rendered.length
+  }
+  return ranges
 }
 
 /** Takes the last `count` lines (the visible window of a scrollback view). */

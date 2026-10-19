@@ -27,4 +27,6 @@ export const sym = {
   diamond: "\u25c6", // ◆
   queued: "\u25cb", // ○ a message that is waiting its turn
   undone: "\u2298", // ⊘ a queued message that was taken back
+  chevronRight: "\u25b8", // ▸ a collapsed thinking block
+  chevronDown: "\u25be", // ▾ an expanded thinking block
 } as const
