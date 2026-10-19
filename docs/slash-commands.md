@@ -86,9 +86,11 @@ panel. Both survive restarts, so an interrupted run resumes from them. See
 
 ### `/rag`
 
-`/rag` shows the project index status; `index` builds or refreshes it, `search
-<query>` searches it, and `clear` deletes it. The index is also what `code_search`
-uses. See [RAG](rag.md).
+`/rag` shows the project index status, including the settings in force
+(`watching on/off`, `auto-inject on/off`, and how many chunks a turn may inject);
+`index` builds or refreshes it, `search <query>` searches it, and `clear` deletes
+it. The index is also what `code_search` uses, and what feeds the `SOURCES` section
+of the side panel. See [RAG](rag.md).
 
 ### `/runtime`
 

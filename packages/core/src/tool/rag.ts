@@ -8,6 +8,7 @@
  * the search works with no model, no network and nothing running.
  */
 import { getRagIndex, formatRagHit, RAG_FRESH_MS } from "../rag/index"
+import { projectRagIndex, refreshRagIndex } from "../rag/config"
 import type { ImurunTool } from "./types"
 import { fail, ok, optionalNumber, optionalString, requireString } from "./types"
 
@@ -37,9 +38,18 @@ export const codeSearchTool: ImurunTool = {
     const limit = Math.min(optionalNumber(args, "limit") ?? DEFAULT_LIMIT, MAX_LIMIT)
     const pathFragment = optionalString(args, "path")
 
-    const index = getRagIndex(ctx.workingDir)
+    if (ctx.config && !ctx.config.rag.enabled) {
+      return fail(
+        "Project search is turned off (rag.enabled is false in your configuration). Use grep for an exact string instead.",
+      )
+    }
+
+    // With no configuration in reach (a bare tool call in a test), fall back to
+    // the index defaults rather than refusing to search.
+    const index = ctx.config ? projectRagIndex(ctx.workingDir, ctx.config) : getRagIndex(ctx.workingDir)
     try {
-      await index.ensureFresh({ maxAgeMs: RAG_FRESH_MS })
+      if (ctx.config) await refreshRagIndex(index, ctx.config)
+      else await index.ensureFresh({ maxAgeMs: RAG_FRESH_MS })
     } catch (error) {
       return fail(`Could not index this project: ${(error as Error).message}`)
     }

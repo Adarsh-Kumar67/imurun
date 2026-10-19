@@ -4,14 +4,35 @@
  */
 import { z } from "zod"
 
+/**
+ * The kinds of thing memory holds.
+ *
+ * One list, used by the durable notes the `memory` tool writes *and* by the
+ * richer entries described below, so a note can never be a kind the store does
+ * not understand. `session_summary` is the odd one out: it names a session
+ * digest document, never a note line.
+ */
 export const MemoryKind = z.enum([
-  "credential",
-  "user_style",
+  /** A lasting project or personal fact. */
   "fact",
-  "session_summary",
+  /** How the user likes to work (style, tooling, conventions). */
   "preference",
+  /** A coding-style observation IMURUN picked up on its own. */
+  "user_style",
+  /** A secret: encrypted at rest, never injected into a prompt. */
+  "credential",
+  /** Unfinished work. */
+  "todo",
+  /** Everything else worth keeping. */
+  "note",
+  /** A past session's digest (a document kind, not a note kind). */
+  "session_summary",
 ])
 export type MemoryKind = z.infer<typeof MemoryKind>
+
+/** The kinds a durable note line may use — everything but a session digest. */
+export const NOTE_KINDS = ["fact", "preference", "user_style", "credential", "todo", "note"] as const
+export type NoteKind = (typeof NOTE_KINDS)[number]
 
 export const MemoryScope = z.enum(["global", "project"])
 export type MemoryScope = z.infer<typeof MemoryScope>

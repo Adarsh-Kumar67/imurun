@@ -179,12 +179,14 @@ decisions, and open todos.
 | --- | --- | --- |
 | `action` | string (required) | `remember`, `recall`, `forget`, or `todos`. |
 | `text` | string | For `remember`: the note, as one self-contained sentence. |
-| `kind` | string | For `remember`: `fact`, `preference`, `todo`, or `note` (default `note`). |
+| `kind` | string | For `remember`: `fact`, `preference`, `user_style`, `credential`, `todo`, or `note` (default `note`). |
 | `tags` | string | For `remember`: comma-separated tags. |
 | `query` | string | For `recall`: what to search for. |
 | `ref` | string | For `forget`: a note id or a text fragment. |
 
-Recall returns up to 8 relevant entries. See [Memory](memory.md).
+Recall returns up to 8 relevant entries. A note saved with `kind=credential` is
+encrypted before it reaches disk and is never injected into a prompt; the model
+only sees it when it explicitly recalls it. See [Memory](memory.md).
 
 ## progress
 
@@ -261,12 +263,30 @@ text.
 | `maxChars` | number | Maximum characters of text (default 12000). |
 
 Shared limits: requests time out at **20 seconds**; at most **2 MB** is
-downloaded per page; fetched text is clamped between 500 and **60000**
-characters; and only `http`/`https` scheme URLs are allowed — anything else is
-refused. When the machine is offline the tools fail with a plain "no network
-connection" message rather than hanging, which matters for a local-first agent.
-The search backend is configurable (`duckduckgo`, `brave`, or `searxng`); see
-[Configuration](configuration.md#web).
+downloaded per page (lower it with `web.maxPageKB`); fetched text is clamped
+between 500 and **60000** characters; and only `http`/`https` scheme URLs are
+allowed — anything else is refused. When the machine is offline the tools fail
+with a plain "no network connection" message rather than hanging, which matters
+for a local-first agent.
+
+The search engine is chosen by `web.searchBackend`:
+
+| Backend | Needs | Notes |
+| --- | --- | --- |
+| `duckduckgo` | nothing | The default. Reads the HTML endpoint; no key, no account. |
+| `searxng` | `web.searxngURL` | Your own or a public instance, asked over its JSON API. |
+| `brave` | `web.braveApiKey` (or `BRAVE_API_KEY`) | The Brave Search API, for a key-backed source. |
+
+Asking for a backend you have not configured fails with a message naming the
+setting, rather than quietly falling back to another engine.
+
+`web.cacheFetches` (off by default) writes each fetched page into
+`<project>/.imurun/web-cache/` as markdown. The project index picks those files up
+on its next refresh, so a page the agent has already read becomes searchable
+offline through `code_search` — one request, then no network. It is off by default
+because it puts files in your project.
+
+See [Configuration](configuration.md#web).
 
 ## task
 

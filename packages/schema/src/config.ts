@@ -56,26 +56,37 @@ export type MemoryConfig = z.infer<typeof MemoryConfig>
 
 export const RagConfig = z.object({
   enabled: z.boolean().default(true),
-  /** Watch project files and re-index incrementally. */
+  /** Re-check the project for changes before a search, so results stay current. */
   watch: z.boolean().default(true),
-  /** Automatically inject retrieved context into prompts. */
+  /** Put the most relevant project material into the prompt automatically. */
   autoInject: z.boolean().default(true),
+  /** Most chunks that may be injected into one turn's prompt. */
   maxInjectChunks: z.number().int().positive().default(6),
-  chunkSize: z.number().int().positive().default(800),
-  chunkOverlap: z.number().int().nonnegative().default(120),
   /** Skip files larger than this. */
-  maxFileSizeKB: z.number().int().positive().default(1024),
+  maxFileSizeKB: z.number().int().positive().default(400),
+  /** Hard ceilings, so a huge or hostile tree cannot exhaust memory. */
+  maxFiles: z.number().int().positive().default(3000),
+  maxChunks: z.number().int().positive().default(6000),
+  /** Chunk shape: lines per chunk, lines shared with the next, characters per cap. */
+  chunkLines: z.number().int().positive().default(60),
+  chunkOverlapLines: z.number().int().nonnegative().default(8),
+  chunkChars: z.number().int().positive().default(1600),
+  /** Project-relative globs that are never indexed. */
   excludeGlobs: z.array(z.string()).default([
     "node_modules/**",
     ".git/**",
     "dist/**",
     "build/**",
     "out/**",
-    "*.min.*",
-    "*.lock",
+    "target/**",
+    "**/*.min.*",
+    "**/*.lock",
+    "bun.lock",
+    "bun.lockb",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
   ]),
-  /** Embedding model used for indexing and queries. */
-  embeddingModel: z.string().default("all-MiniLM-L6-v2"),
 })
 export type RagConfig = z.infer<typeof RagConfig>
 
@@ -89,11 +100,19 @@ export const TuiConfig = z.object({
 export type TuiConfig = z.infer<typeof TuiConfig>
 
 export const WebConfig = z.object({
-  /** Search backend: "duckduckgo" needs no key. */
+  /** Which engine web_search asks: DuckDuckGo needs no key at all. */
   searchBackend: z.enum(["duckduckgo", "brave", "searxng"]).default("duckduckgo"),
+  /** Base URL of the SearXNG instance used when searchBackend is "searxng". */
   searxngURL: z.string().optional(),
-  /** Cache fetched pages into the RAG index for later reuse. */
-  cacheFetches: z.boolean().default(true),
+  /** Brave Search API key, for searchBackend "brave" (`BRAVE_API_KEY` also works). */
+  braveApiKey: z.string().optional(),
+  /**
+   * Write fetched pages into the project (`.imurun/web-cache`) so the project
+   * index can find them again offline. Off by default: it puts files in your
+   * project, and that should be a choice.
+   */
+  cacheFetches: z.boolean().default(false),
+  /** Most of a page web_fetch downloads before it is cut off. */
   maxPageKB: z.number().int().positive().default(2048),
 })
 export type WebConfig = z.infer<typeof WebConfig>

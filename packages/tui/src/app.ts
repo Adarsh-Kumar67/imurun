@@ -30,7 +30,6 @@ import {
   defaultAgent,
   getAgent,
   getProviderPreset,
-  getRagIndex,
   getSkill,
   loadAgents,
   loadConfigSafe,
@@ -41,7 +40,9 @@ import {
   planStoreFor,
   primaryAgents,
   probeProvider,
+  projectRagIndex,
   providerModelOptions,
+  refreshRagIndex,
   removeGlobalConfigEntry,
   restrictToolRegistry,
   subagents,
@@ -98,7 +99,7 @@ import { Screen } from "./screen"
 import { sidebarLines, type SidebarState, type SidebarTodo } from "./sidebar"
 import { parseSlash, type ParsedSlash, type SlashRegistry } from "./slash"
 import { firstLine, fitVisible, padVisible, visibleWidth } from "./text"
-import { sym, theme } from "./theme"
+import { sym, setTheme, theme } from "./theme"
 
 export { fitInput } from "./text"
 
@@ -299,6 +300,10 @@ export class TuiApp {
   private readonly providerModelContext = new Map<string, number>()
   /** Models already asked about, so an unadvertised window is probed once. */
   private readonly contextProbed = new Set<string>()
+  /** Project material the index fed into the current turn, shown in the panel. */
+  private ragSources: Array<{ path: string; start: number; end: number; score: number }> = []
+  /** What memory holds, shown in the panel when `tui.showMemoryUsage` is on. */
+  private memoryStats: { notes: number; sessions: number } | undefined
   private todos: SidebarTodo[] = []
   /** The plan as stored, so /todo can act on it by number. */
   private todoItems: Todo[] = []
@@ -374,6 +379,13 @@ export class TuiApp {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   async start(): Promise<number> {
+    // The palette is chosen before anything is drawn, so the welcome art is
+    // already in the right colors.
+    const appliedTheme = setTheme(this.config.tui.theme)
+    if (appliedTheme !== this.config.tui.theme) {
+      this.pushNotice(`unknown theme "${this.config.tui.theme}" — using ${appliedTheme}`, "warn")
+    }
+
     await this.reloadAgents()
     this.agent = defaultAgent(this.agents)
     this.skills = await loadSkills({ workingDir: this.workingDir }).catch(() => [])
@@ -408,8 +420,9 @@ export class TuiApp {
 
   /** Builds the project index off the critical path; never fails the startup. */
   private async warmIndex(): Promise<void> {
+    if (!this.config.rag.enabled) return
     try {
-      await getRagIndex(this.workingDir).ensureFresh()
+      await refreshRagIndex(projectRagIndex(this.workingDir, this.config), this.config)
     } catch {
       /* the index is an optimisation — startup must not depend on it */
     }
@@ -1222,6 +1235,8 @@ export class TuiApp {
     // The chip belongs to the request in flight; clear the previous one so a
     // turn that selects no skill does not show a stale one.
     this.skillChip = undefined
+    // Same for the panel's sources: they describe this turn's prompt.
+    this.ragSources = []
 
     const tools = restrictToolRegistry(this.baseTools, this.agent)
     const role = this.agent.prompt.trim() || undefined
@@ -1247,6 +1262,12 @@ export class TuiApp {
           break
         case "notice":
           this.pushNotice(event.text, event.tone ?? "info")
+          break
+        case "rag":
+          // The index found these for the current turn. They show in the panel
+          // as "sources", so the user can see what the answer was built from.
+          this.ragSources = event.hits
+          this.scheduleRender()
           break
         case "tool-unrecognised":
           this.pushNotice(
@@ -2113,13 +2134,20 @@ export class TuiApp {
     this.modelRef = session.model ?? this.modelRef
     this.pushNotice(`resumed ${session.id.slice(0, 12)}\u2026 \u00b7 ${session.messageCount} messages`, "ok")
 
-    const recent = this.sessions.getMessages(session.id).slice(-6)
+    // Put back the sources the last turn was built from, so a resumed session
+    // shows the same provenance the live turn did instead of an empty panel.
+    const all = this.sessions.getMessages(session.id)
+    const lastWithSources = [...all].reverse().find((message) => (message.metadata?.ragSources?.length ?? 0) > 0)
+    this.ragSources = lastWithSources?.metadata?.ragSources ?? []
+
+    const recent = all.slice(-6)
     for (const message of recent) {
       const text = typeof message.content === "string" ? message.content : ""
       if (!text.trim()) continue
       if (message.role === "user") this.pushBlock({ kind: "user", text })
       else if (message.role === "assistant") this.pushBlock({ kind: "assistant", text: firstLine(text, 200) })
     }
+    void this.refreshSidebar()
   }
 
   renameSession(title?: string): void {
@@ -2885,7 +2913,8 @@ export class TuiApp {
       const hits = await this.memory.search(query, { limit: 8, projectPath: this.workingDir })
       this.print(`  ${theme.bold(`Recall \u00b7 "${query}"`)}`)
       if (hits.length === 0) this.print(theme.dim("    nothing found"))
-      else for (const line of formatHits(hits)) this.print(`    ${theme.dim(line)}`)
+      // A stored credential is never printed in the clear, even here.
+      else for (const line of formatHits(hits, { maskSecrets: true })) this.print(`    ${theme.dim(line)}`)
     } else {
       this.print(theme.dim("  /memory <query> searches it \u00b7 /compact folds older turns into the summary to free context"))
     }
@@ -2971,13 +3000,20 @@ export class TuiApp {
    */
   async ragCommand(args: string[]): Promise<void> {
     const verb = (args[0] ?? "status").toLowerCase()
-    const index = getRagIndex(this.workingDir)
+    const index = projectRagIndex(this.workingDir, this.config)
 
     if (verb === "status" || verb === "info") {
       const stats = index.stats()
       this.print()
       this.print(`  ${theme.bold("Project index")}`)
       this.print(`    ${theme.dim("directory")}  ${theme.muted(stats.root)}`)
+      this.print(
+        `    ${theme.dim("settings")}   ${theme.muted(
+          this.config.rag.enabled
+            ? `watching ${this.config.rag.watch ? "on" : "off"} \u00b7 auto-inject ${this.config.rag.autoInject ? "on" : "off"} \u00b7 ${this.config.rag.maxInjectChunks} chunk(s)/turn`
+            : "disabled (rag.enabled is false)",
+        )}`,
+      )
       if (stats.builtAt === 0) {
         this.print(`    ${theme.muted("not built yet \u2014 /rag index builds it, or just ask something that needs it")}`)
       } else {
@@ -3000,8 +3036,8 @@ export class TuiApp {
 
     if (verb === "index" || verb === "refresh") {
       this.pushNotice("indexing the project\u2026", "info")
-      const result = await index.ensureFresh({ maxAgeMs: -1 })
-      if (!result || !result.changedAnything) {
+      const result = await index.refresh()
+      if (!result.changedAnything) {
         this.pushNotice("index is already up to date", "ok")
         return
       }
@@ -3023,7 +3059,7 @@ export class TuiApp {
       return
     }
 
-    await index.ensureFresh()
+    await refreshRagIndex(index, this.config)
     const hits = index.search(query, { limit: 6 })
     this.print()
     if (hits.length === 0) {
@@ -3269,6 +3305,8 @@ export class TuiApp {
       plan: this.plan ? planCounts(this.plan.steps) : undefined,
       queue: this.queue.size,
       subagents: this.activeSubagents,
+      sources: this.config.tui.showRagSources ? this.ragSources : undefined,
+      memory: this.memoryStats,
       busy: this.busy,
     }
   }
@@ -3283,6 +3321,12 @@ export class TuiApp {
       }
       this.contextUsed = Math.round(chars / 4)
       await this.refreshTodos()
+      if (this.config.tui.showMemoryUsage) {
+        const stats = await this.memory.stats().catch(() => undefined)
+        this.memoryStats = stats ? { notes: stats.notes, sessions: stats.sessions } : undefined
+      } else {
+        this.memoryStats = undefined
+      }
       const status = await this.runtime.status().catch(() => undefined)
       const runtimeContext = status?.running ? status.state?.contextSize : undefined
       this.contextMax = await this.resolveContextMax(runtimeContext)

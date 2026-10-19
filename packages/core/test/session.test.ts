@@ -106,7 +106,10 @@ describe("sessions", () => {
       content: "Checking now",
       toolCalls: [{ id: "call_1", name: "read", args: { path: "auth.ts" } }],
       usage: { inputTokens: 120, outputTokens: 30, cost: 0 },
-      metadata: { model: "qwen2.5-coder-7b", ragSources: [{ chunkId: "c1", score: 0.9 }] },
+      metadata: {
+        model: "qwen2.5-coder-7b",
+        ragSources: [{ path: "src/auth.ts", start: 10, end: 42, score: 4.5 }],
+      },
     })
     sessions.addMessage({
       sessionId: s.id,
@@ -119,7 +122,8 @@ describe("sessions", () => {
     expect(messages).toHaveLength(3)
     expect(messages[1]!.toolCalls?.[0]!.name).toBe("read")
     expect(messages[1]!.usage?.inputTokens).toBe(120)
-    expect(messages[1]!.metadata?.ragSources?.[0]!.chunkId).toBe("c1")
+    expect(messages[1]!.metadata?.ragSources?.[0]!.path).toBe("src/auth.ts")
+    expect(messages[1]!.metadata?.ragSources?.[0]!.start).toBe(10)
     expect(messages[2]!.toolCallId).toBe("call_1")
 
     const session = sessions.get(s.id)

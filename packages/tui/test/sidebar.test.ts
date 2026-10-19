@@ -147,6 +147,36 @@ describe("sidebarLines", () => {
     expect(plain).toContain("TODOS  0/9")
     expect(plain).toContain("+3 more")
   })
+
+  test("the index's sources are named, so the answer's provenance is visible", () => {
+    const plain = sidebarLines({
+      ...state,
+      sources: [
+        { path: "packages/tui/src/app.ts", start: 120, end: 160, score: 9.1 },
+        { path: "packages/core/src/agent/agent.ts", start: 300, end: 330, score: 7.4 },
+      ],
+    })
+      .map(stripAnsi)
+      .join("\n")
+
+    expect(plain).toContain("SOURCES  2")
+    expect(plain).toContain("app.ts:120")
+    expect(plain).toContain("agent.ts:300")
+    // Absent when the turn used none, or when config hides them.
+    expect(sidebarLines(state).map(stripAnsi).join("\n")).not.toContain("SOURCES")
+  })
+
+  test("memory is reported only when the setting asks for it", () => {
+    const withMemory = sidebarLines({ ...state, memory: { notes: 12, sessions: 3 } }).map(stripAnsi).join("\n")
+    expect(withMemory).toContain("MEMORY")
+    expect(withMemory).toContain("12 note(s) \u00b7 3 session(s)")
+
+    // Nothing remembered yet: no empty section.
+    const empty = sidebarLines({ ...state, memory: { notes: 0, sessions: 0 } }).map(stripAnsi).join("\n")
+    expect(empty).not.toContain("MEMORY")
+
+    expect(sidebarLines(state).map(stripAnsi).join("\n")).not.toContain("MEMORY")
+  })
 })
 
 describe("sidebarSummary", () => {

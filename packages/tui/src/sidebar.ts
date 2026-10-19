@@ -39,6 +39,16 @@ export interface SidebarState {
   queue: number
   /** Subagents running right now. */
   subagents?: number
+  /**
+   * Project material the index injected into the current turn, so it is visible
+   * *why* the answers know the codebase. Empty means the last turn used none.
+   * Omitted entirely when `tui.showRagSources` is off.
+   */
+  sources?: Array<{ path: string; start: number; end: number; score: number }>
+  /**
+   * What memory holds. Omitted when `tui.showMemoryUsage` is off.
+   */
+  memory?: { notes: number; sessions: number }
   busy: boolean
 }
 
@@ -172,6 +182,24 @@ export function sidebarLines(state: SidebarState): string[] {
     lines.push(blank(width))
     lines.push(title(`subagents  ${state.subagents}`, width))
     lines.push(value(theme.accent("\u2937 working"), width))
+  }
+
+  if (state.memory && (state.memory.notes > 0 || state.memory.sessions > 0)) {
+    lines.push(blank(width))
+    lines.push(title("memory", width))
+    lines.push(
+      value(theme.muted(`${state.memory.notes} note(s) \u00b7 ${state.memory.sessions} session(s)`), width),
+    )
+  }
+
+  if (state.sources && state.sources.length > 0) {
+    lines.push(blank(width))
+    lines.push(title(`sources  ${state.sources.length}`, width))
+    for (const source of state.sources.slice(0, 5)) {
+      const name = source.path.split("/").pop() ?? source.path
+      lines.push(value(theme.muted(truncateVisible(`${name}:${source.start}`, inner)), width))
+    }
+    if (state.sources.length > 5) lines.push(value(theme.dim(`+${state.sources.length - 5} more`), width))
   }
 
   if (state.queue > 0) {

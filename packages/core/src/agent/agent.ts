@@ -36,6 +36,9 @@ import { formatLedger, ledgerFor } from "../memory/ledger"
 import { planPromptLines } from "../todo/plan"
 import { todoPromptLines } from "../tool/todo"
 import { formatHit } from "../memory/search"
+import { learnFromMessage } from "../memory/learn"
+import { projectRagIndex, refreshRagIndex } from "../rag/config"
+import { formatRagHit } from "../rag/index"
 import { selectSkills, skillsToPromptSection } from "./skills"
 import type { SkillDefinition } from "./skills"
 
@@ -64,6 +67,12 @@ export type AgentEvent =
   | { type: "continuation"; attempt: number }
   /** Files changed this turn and none were inspected since; a check was asked for. */
   | { type: "verifying"; files: string[] }
+  /**
+   * Project material the index found and put into this turn's prompt, so the UI
+   * can show what was consulted rather than the user wondering why the answers
+   * suddenly know the codebase.
+   */
+  | { type: "rag"; hits: Array<{ path: string; start: number; end: number; score: number }> }
   | { type: "tool-start"; callId: string; name: string; args: unknown; title?: string }
   | { type: "tool-end"; callId: string; name: string; ok: boolean; output: string; title?: string }
   | { type: "permission"; request: PermissionRequest; allowed: boolean }
@@ -302,22 +311,74 @@ export class Agent {
       this.log.debug(`plan skipped: ${errorMessage(error)}`)
     }
 
+    const query = promptQuery(run.input)
+
     if (memory && memoryOn) {
       try {
-        const query = typeof run.input === "string" ? run.input : run.input.map((p) => (p.type === "text" ? p.text : "")).join(" ")
         memories = (
           await memory.search(query, {
             limit: config.memory.maxRecallEntries,
             projectPath: run.workingDir,
+            // With cross-session recall off, past sessions' digests stay out of
+            // the prompt; this machine's own notes are still recalled.
+            sources: config.memory.crossSession ? undefined : ["note"],
           })
-        ).map(formatHit)
+        ).map((hit) => formatHit(hit))
         durableNotes = await memory.durable(run.workingDir)
         todos = (await memory.openTodos(run.workingDir)).slice(0, 10)
       } catch (error) {
         // Memory must never break a run.
         this.log.debug(`memory recall skipped: ${errorMessage(error)}`)
       }
+
+      // Standing instructions and personal facts the user stated in passing
+      // ("always use tabs", "my name is …") are learned here, rather than being
+      // lost whenever the model does not think to call the memory tool.
+      try {
+        if (typeof run.input === "string") {
+          const learned = await learnFromMessage(memory, run.input, {
+            learnStyle: config.memory.learnStyle,
+            projectPath: run.workingDir,
+            sessionId: run.sessionId,
+          })
+          for (const note of learned) run.onEvent?.({ type: "notice", text: `noted \u00b7 ${note}`, tone: "info" })
+        }
+      } catch (error) {
+        this.log.debug(`learning skipped: ${errorMessage(error)}`)
+      }
     }
+
+    // ── Project context: what the index already knows about this request ─────
+    // Found before the model can ask for it, so a local model with a small
+    // window starts the turn with the right files in view instead of spending
+    // its steps hunting for them. This is the "auto-inject" half of the index;
+    // `code_search` is the other half, for when the model wants to dig.
+    let ragSection: string[] = []
+    let ragHits: Array<{ path: string; start: number; end: number; score: number }> = []
+    if (config.rag.enabled && config.rag.autoInject && activeTools.get("code_search")) {
+      try {
+        const index = projectRagIndex(run.workingDir, config)
+        await refreshRagIndex(index, config)
+        const hits = index.search(query, { limit: config.rag.maxInjectChunks })
+        if (hits.length > 0) {
+          ragSection = [
+            "## Project context",
+            "",
+            "The most relevant places in this project for the request. Prefer these over searching again.",
+            "",
+            ...hits.map((hit) => formatRagHit(hit)),
+          ]
+          ragHits = hits.map((hit) => ({ path: hit.path, start: hit.start, end: hit.end, score: hit.score }))
+          run.onEvent?.({ type: "rag", hits: ragHits })
+        }
+      } catch (error) {
+        // Indexing must never break a turn; the model can still call code_search.
+        this.log.debug(`project context skipped: ${errorMessage(error)}`)
+      }
+    }
+    // True once the turn's first step has been persisted, so the injected
+    // sources are recorded exactly once.
+    let ragRecorded = false
 
     // ── Skills: apply the method that fits this request ────────────────────
     // A skill is a way of working, so it belongs in the prompt; the user should
@@ -379,7 +440,7 @@ export class Agent {
         todos: summary ? [] : [...planned, ...todos],
         plan: summary ? undefined : planLines,
         compactedSummary: summary,
-        extraSections: [...(run.extraSystemSections ?? []), ...skillSections],
+        extraSections: [...(run.extraSystemSections ?? []), ...skillSections, ...ragSection],
         inProgress,
       })
 
@@ -653,8 +714,18 @@ export class Agent {
           content: text,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           usage: { inputTokens: stepUsage.inputTokens, outputTokens: stepUsage.outputTokens, cost: 0 },
-          metadata: { model: resolved.modelId, provider: resolved.provider.id },
+          metadata: {
+            model: resolved.modelId,
+            provider: resolved.provider.id,
+            // Recorded on the turn's first step, and only there: the sources are
+            // what the whole turn was working from, and repeating them on every
+            // later step would be noise. Resuming the session brings them back.
+            ...(ragRecorded || ragHits.length === 0
+              ? {}
+              : { ragSources: ragHits.map((hit) => ({ ...hit })) }),
+          },
         })
+        ragRecorded = true
       }
 
       if (text) finalText += (finalText ? "\n" : "") + text
@@ -811,6 +882,7 @@ export class Agent {
       agentId: run.agentId,
       signal: run.signal,
       log: this.log.child(name),
+      config: this.options.config,
       ledger: ledgerFor(run.workingDir),
     }
     try {

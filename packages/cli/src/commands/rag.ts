@@ -11,7 +11,7 @@
  * not find something.
  */
 import chalk from "chalk"
-import { clearRagCache, formatRagHit, getRagIndex, type RagSearchHit } from "@imurun/core"
+import { clearRagCache, formatRagHit, loadConfigSafe, projectRagIndex, refreshRagIndex, type RagIndex, type RagSearchHit } from "@imurun/core"
 import { formatBytes, formatTimestamp } from "@imurun/util"
 import type { Command } from "../framework/command"
 
@@ -29,7 +29,11 @@ export const ragCommand: Command = {
 
   async run({ args, options }): Promise<number> {
     const sub = (args[0] ?? "status").toLowerCase()
-    const index = getRagIndex(process.cwd())
+    // The index is configured from the project's own config, so the limits,
+    // chunking and exclusion list are the ones the docs describe.
+    const { loaded } = await loadConfigSafe(process.cwd())
+    const config = loaded.config
+    const index = projectRagIndex(process.cwd(), config)
     const json = options.json === true
     const limit = Math.max(Number(options.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 1)
     const pathFilter = options.path ? String(options.path) : undefined
@@ -37,7 +41,7 @@ export const ragCommand: Command = {
     switch (sub) {
       case "status":
       case "info":
-        return showStatus(index, json)
+        return showStatus(index, json, config.rag)
 
       case "index":
       case "refresh":
@@ -57,6 +61,7 @@ export const ragCommand: Command = {
           console.error('  Usage: imurun rag search "where are permissions checked"')
           return 1
         }
+        await refreshRagIndex(index, config)
         return runSearch(index, query, limit, pathFilter, json)
       }
 
@@ -67,22 +72,30 @@ export const ragCommand: Command = {
           console.error("  Try: imurun rag status | index | search <query> | clear")
           return 1
         }
+        await refreshRagIndex(index, config)
         return runSearch(index, query, limit, pathFilter, json)
       }
     }
   },
 }
 
-type Index = ReturnType<typeof getRagIndex>
+type Index = RagIndex
 
-function showStatus(index: Index, json: boolean): number {
+function showStatus(index: Index, json: boolean, settings: { enabled: boolean; watch: boolean; autoInject: boolean; maxInjectChunks: number }): number {
   const stats = index.stats()
   if (json) {
-    console.log(JSON.stringify(stats, null, 2))
+    console.log(JSON.stringify({ ...stats, settings }, null, 2))
     return 0
   }
   console.log("")
   console.log(`  ${chalk.bold("Project index")} ${chalk.gray(stats.root)}`)
+  console.log(
+    `    settings  ${chalk.gray(
+      settings.enabled
+        ? `watching ${settings.watch ? "on" : "off"} · auto-inject ${settings.autoInject ? "on" : "off"} · ${settings.maxInjectChunks} chunk(s)/turn`
+        : "disabled (rag.enabled is false)",
+    )}`,
+  )
   if (stats.builtAt === 0) {
     console.log(`    ${chalk.gray("not built yet — run 'imurun rag index'")}`)
   } else {
@@ -98,8 +111,8 @@ function showStatus(index: Index, json: boolean): number {
 
 async function runIndex(index: Index): Promise<number> {
   process.stdout.write(`  ${chalk.gray("indexing")} ${chalk.cyan(process.cwd())} … `)
-  const result = await index.ensureFresh({ maxAgeMs: -1 })
-  if (!result || !result.changedAnything) {
+  const result = await index.refresh()
+  if (!result.changedAnything) {
     process.stdout.write(`${chalk.gray("already up to date")}\n\n`)
     return 0
   }

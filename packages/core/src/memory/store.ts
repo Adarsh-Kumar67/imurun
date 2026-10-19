@@ -16,10 +16,13 @@ import { join } from "node:path"
 import { ensureDir, imurunDir, newId, readJson, writeJsonAtomic, writeFileAtomic, readText, removeIfExists } from "@imurun/util"
 import type { Session } from "@imurun/schema"
 import type { Message } from "@imurun/schema"
+import { NOTE_KINDS, type NoteKind } from "@imurun/schema"
 import { bm25Search, formatHit, type SearchDoc, type SearchHit, type SearchOptions } from "./search"
 import { buildDigest, digestToMarkdown, type SessionDigest } from "./summarize"
+import { isSealed, openSecret, sealSecret } from "./vault"
 
-export type MemoryKind = "fact" | "preference" | "todo" | "note"
+/** Note kinds are the schema's list minus the session-digest document kind. */
+export type MemoryKind = NoteKind
 
 export interface MemoryRecord {
   id: string
@@ -66,8 +69,10 @@ delete lines freely. Each line has the form:
 
     - [kind] text — tags: a, b
 
-Valid kinds: fact, preference, todo, note. IMURUN rewrites this file when it
-learns something new; anything you keep here is picked up again automatically.
+Valid kinds: ${NOTE_KINDS.join(", ")}. A [credential] line is encrypted, so it
+reads as enc:{"v":1,...} here — IMURUN decrypts it with the machine key in
+~/.imurun/key when it needs it. IMURUN rewrites this file when it learns
+something new; anything you keep here is picked up again automatically.
 
 `
 
@@ -102,6 +107,7 @@ export class MemoryStore {
 
     const file = await readJson<MemoryIndexFile>(this.indexPath)
     if (file && Array.isArray(file.notes) && Array.isArray(file.digests)) {
+      await this.unseal(file.notes)
       this.cache = file
       return file
     }
@@ -112,11 +118,31 @@ export class MemoryStore {
     return this.cache
   }
 
+  /** Decrypts any sealed credential in place, so callers only see plaintext. */
+  private async unseal(notes: MemoryRecord[]): Promise<void> {
+    for (const note of notes) {
+      if (note.kind !== "credential" || !isSealed(note.text)) continue
+      const plain = await openSecret(note.text)
+      if (plain !== undefined) note.text = plain
+    }
+  }
+
+  /**
+   * The form of a note that may be written to disk: credentials are sealed, so
+   * a copy of notes.md never carries the secret in the clear.
+   */
+  private async sealForDisk(note: MemoryRecord): Promise<MemoryRecord> {
+    if (note.kind !== "credential" || isSealed(note.text)) return note
+    return { ...note, text: await sealSecret(note.text) }
+  }
+
   private async save(): Promise<void> {
     const file = this.cache ?? (await this.load())
     await ensureDir(this.dir)
-    await writeJsonAtomic(this.indexPath, file)
-    await writeFileAtomic(this.notesPath, this.renderNotesMarkdown(file.notes))
+    const sealed: MemoryRecord[] = []
+    for (const note of file.notes) sealed.push(await this.sealForDisk(note))
+    await writeJsonAtomic(this.indexPath, { ...file, notes: sealed })
+    await writeFileAtomic(this.notesPath, this.renderNotesMarkdown(sealed))
   }
 
   private renderNotesMarkdown(notes: MemoryRecord[]): string {
@@ -146,8 +172,12 @@ export class MemoryStore {
     const notes: MemoryRecord[] = []
     const now = Date.now()
     for (const line of raw.split(/\r?\n/)) {
-      const match = /^\s*[-*]\s*\[(fact|preference|todo|note)\]\s*(.+)$/i.exec(line)
+      const match = /^\s*[-*]\s*\[([a-z_]+)\]\s*(.+)$/i.exec(line)
       if (!match) continue
+      const kind = match[1]!.toLowerCase()
+      // An unknown kind (or the digest kind) is not a note; leave it alone
+      // rather than inventing a note with a kind nothing understands.
+      if (!(NOTE_KINDS as readonly string[]).includes(kind)) continue
       let text = match[2]!.trim()
       let projectPath: string | undefined
       const tags: string[] = []
@@ -169,7 +199,7 @@ export class MemoryStore {
 
       notes.push({
         id: newId("mem"),
-        kind: match[1]!.toLowerCase() as MemoryKind,
+        kind: kind as MemoryKind,
         text,
         tags,
         projectPath,
@@ -178,6 +208,7 @@ export class MemoryStore {
         usageCount: 0,
       })
     }
+    await this.unseal(notes)
     return notes
   }
 
@@ -313,57 +344,66 @@ export class MemoryStore {
   // ── Retrieval ─────────────────────────────────────────────────────────────
 
   /** Search docs for notes and session digests, ready for the ranker. */
-  private async searchDocs(): Promise<SearchDoc[]> {
+  private async searchDocs(sources?: Array<"note" | "session">): Promise<SearchDoc[]> {
     const file = await this.load()
     const docs: SearchDoc[] = []
+    const wantNotes = !sources || sources.includes("note")
+    const wantSessions = !sources || sources.includes("session")
 
-    for (const note of file.notes) {
-      docs.push({
-        id: note.id,
-        text: `${note.kind} ${note.text} ${note.tags.join(" ")}`,
-        kind: note.kind,
-        source: "note",
-        projectPath: note.projectPath,
-        updatedAt: note.updatedAt,
-      })
+    if (wantNotes) {
+      for (const note of file.notes) {
+        docs.push({
+          id: note.id,
+          text: `${note.kind} ${note.text} ${note.tags.join(" ")}`,
+          kind: note.kind,
+          source: "note",
+          projectPath: note.projectPath,
+          updatedAt: note.updatedAt,
+        })
+      }
     }
-    for (const digest of file.digests) {
-      const parts = [
-        digest.title,
-        digest.highlights.join(" "),
-        digest.done.join(" "),
-        digest.files.join(" "),
-        digest.commands.join(" "),
-        digest.todos.join(" "),
-      ]
-      docs.push({
-        id: digest.sessionId,
-        text: parts.join(" "),
-        kind: "session_summary",
-        source: "session",
-        projectPath: digest.workingDir,
-        updatedAt: digest.updatedAt,
-      })
+    if (wantSessions) {
+      for (const digest of file.digests) {
+        const parts = [
+          digest.title,
+          digest.highlights.join(" "),
+          digest.done.join(" "),
+          digest.files.join(" "),
+          digest.commands.join(" "),
+          digest.todos.join(" "),
+        ]
+        docs.push({
+          id: digest.sessionId,
+          text: parts.join(" "),
+          kind: "session_summary",
+          source: "session",
+          projectPath: digest.workingDir,
+          updatedAt: digest.updatedAt,
+        })
+      }
     }
     return docs
   }
 
   /** BM25 recall over everything remembered. */
   async search(query: string, options: SearchOptions = {}): Promise<SearchHit[]> {
-    const docs = await this.searchDocs()
+    const docs = await this.searchDocs(options.sources)
     return bm25Search(docs, query, options)
   }
 
   /**
    * Durable notes worth pinning into every prompt: things the user explicitly
    * asked to remember, scoped to the active project plus global notes.
+   *
+   * Credentials are deliberately left out: a secret belongs in memory for the
+   * model to look up, not in the system prompt of every turn.
    */
   async durable(projectPath?: string, limit = 8): Promise<string[]> {
     const file = await this.load()
     const normalized = projectPath?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
 
     return file.notes
-      .filter((note) => note.kind !== "note")
+      .filter((note) => note.kind !== "note" && note.kind !== "credential")
       .filter((note) => {
         if (!note.projectPath) return true
         if (!normalized) return true
@@ -395,6 +435,6 @@ export class MemoryStore {
 }
 
 /** Formats recall hits as system-prompt bullet lines. */
-export function formatHits(hits: SearchHit[]): string[] {
-  return hits.map(formatHit)
+export function formatHits(hits: SearchHit[], options: { maskSecrets?: boolean } = {}): string[] {
+  return hits.map((hit) => formatHit(hit, options))
 }

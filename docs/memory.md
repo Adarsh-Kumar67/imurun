@@ -21,7 +21,7 @@ There are five parts:
 
 | Part | What it holds | Where it lives |
 | --- | --- | --- |
-| Durable notes | Facts, preferences, decisions, and todos you or the agent chose to keep. | `~/.imurun/memory/notes.md` |
+| Durable notes | Facts, preferences, style observations, secrets (encrypted), and todos you or the agent chose to keep. | `~/.imurun/memory/notes.md` |
 | Session digests | An extractive summary of each session. | `~/.imurun/memory/sessions/<id>.md` |
 | Progress ledger | Exact key/value state for resuming interrupted work. | `~/.imurun/memory/ledger/<hash>.json` |
 | Todos | The live checklist the side panel shows. | `<project>/.imurun/todos.md` |
@@ -39,14 +39,21 @@ Notes are the part of memory that is meant to last. The model writes them with t
 ```
 
 Each line has the form `- [kind] text — tags: a, b`, and an optional
-`— project: <path>` suffix scopes a note to one project. There are four kinds:
+`— project: <path>` suffix scopes a note to one project. A credential's text is
+encrypted (see [Credentials](#credentials)), which is why its line looks like
+`- [credential] enc:...`. There are six kinds:
 
 | Kind | Use it for |
 | --- | --- |
 | `fact` | A lasting project fact. |
 | `preference` | How you like to work (style, tooling, conventions). |
+| `user_style` | A style observation IMURUN noticed on its own. |
+| `credential` | A secret. Encrypted at rest, never put in a prompt. |
 | `todo` | Unfinished work worth carrying forward. |
 | `note` | Everything else. |
+
+`session_summary` appears in the machine index to name a session digest document;
+it is never a note line.
 
 This file is yours: add, edit, or delete lines freely. IMURUN rewrites it whenever
 it learns something new, and re-reads it on the next load, so any line you keep is
@@ -58,6 +65,48 @@ and timestamp) rather than adding a duplicate. The `memory` tool also has
 `action=recall` to search notes, `action=forget` to remove a note by id or text
 fragment, and `action=todos` to list unfinished work. See
 [Tools](tools.md#memory).
+
+### Learning as you talk
+
+You should not have to say "remember this". When a message contains a standing
+instruction — *"always use tabs in this repo"*, *"never touch `vendor/`"*, *"I
+prefer pnpm"* — IMURUN saves it as a `user_style` note and prints a short
+`noted · …` line so you can see it happen (and say if it got it wrong). Personal
+details (*"my name is …"*, *"I work at …"*, *"remember that …"*) are saved as
+`fact`s, which is the same path the recall in [How recall works](#how-recall-works)
+reads from later.
+
+Learning is deliberately narrow: it looks for the patterns above and nothing
+else. Ordinary requests ("run the tests", "fix the parser") teach it nothing, and
+a long pasted document is skipped entirely rather than mined for rules. Set
+`memory.learnStyle` to `false` to turn off `user_style` notes while still keeping
+facts.
+
+## Credentials
+
+A secret you ask IMURUN to keep is stored, encrypted, in the same `notes.md` as
+everything else — prefixed with `enc:` so the file still makes sense to read:
+
+```markdown
+- [credential] enc:v1:… — tags: deploy
+```
+
+The key is 32 random bytes in `~/.imurun/key`, created the first time a secret is
+saved, readable only by you (`0600`), and never printed, logged, or sent anywhere.
+Losing that file means the secrets it protected cannot be recovered — which is why
+they are encrypted rather than left in a markdown file in the first place.
+
+Three properties follow, and all three are deliberate:
+
+- **Credentials are never injected into a prompt.** The durable notes that get
+  pinned into every turn skip `credential` notes; the model only ever sees a
+  secret if it asks for it with `memory action=recall`.
+- **Listings mask them.** `/memory` and human-facing output show the credential's
+  name, not its value; the tool result is where the value appears.
+- **A lost key does not break a run.** An unreadable secret is dropped from the
+  result rather than throwing, so a rotated or missing key degrades to "I can't
+  read that" instead of a crash.
+
 
 ## Session digests
 
@@ -159,9 +208,11 @@ The `memory` tool's `recall` action returns up to 8 hits; the run itself recalls
 
 At the start of a turn IMURUN gathers, all offline:
 
-- the most relevant recalled memories (notes + digests),
-- the **durable notes** worth pinning — non-`note` entries, project-scoped plus
-  global, newest first, up to 8,
+- the most relevant recalled memories (notes + digests, or notes alone when
+  `memory.crossSession` is off),
+- the **durable notes** worth pinning — everything but `note` and `credential`
+  entries, project-scoped plus global, newest first, up to 8,
+- the project material the index considered relevant, when `rag.autoInject` is on,
 - the open todos (project todos plus up to 10 carried forward from memory),
 - the open progress-ledger entries (up to 12),
 - the written plan, if `.imurun/PLAN.md` exists.
@@ -178,6 +229,8 @@ The `memory` section of `imurun.json` controls it (see
 {
   "memory": {
     "enabled": true,
+    "learnStyle": true,
+    "crossSession": true,
     "autoSummarize": true,
     "maxRecallEntries": 5
   }
@@ -185,9 +238,11 @@ The `memory` section of `imurun.json` controls it (see
 ```
 
 `enabled` is the master switch; `autoSummarize` controls writing session digests;
-`maxRecallEntries` sets how many recalled entries a turn includes. The section
-also declares `learnStyle` and `crossSession`, which exist on the configuration
-surface.
+`maxRecallEntries` sets how many recalled entries a turn includes;
+`learnStyle` turns the automatic `user_style` notes on or off (facts are always
+kept when you state them); and `crossSession` decides whether session digests take
+part in recall. With `crossSession: false`, a turn searches only your own notes —
+nothing from past sessions — which is the setting for a shared or audited machine.
 
 ## Managing memory
 
@@ -211,7 +266,11 @@ The `imurun sessions` command lists and manages sessions (see
   sessions/<id>.md       one digest per session
   ledger/<hash>.json     one progress ledger per project
 
+~/.imurun/
+  key                   machine key for encrypted credentials (0600)
+
 <project>/.imurun/
   todos.md              the live checklist
   PLAN.md               the written plan
+  web-cache/            pages web_fetch cached, when web.cacheFetches is on
 ```

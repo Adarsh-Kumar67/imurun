@@ -23,6 +23,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { ensureDir, imurunDir, logger, readJson, sha256, writeJsonAtomic } from "@imurun/util"
 import { tokenize } from "../memory/search"
 import { isIgnoredPath } from "../tool/glob"
+import { isExcludedPath } from "./globs"
 
 /** Bump when the snapshot shape changes so old snapshots are ignored. */
 const RAG_VERSION = 1
@@ -250,6 +251,12 @@ export interface RagIndexOptions {
   maxFileBytes?: number
   maxChunks?: number
   maxIndexChars?: number
+  /** Lines per chunk, lines shared with the next, and a character cap. */
+  chunkLines?: number
+  chunkOverlapLines?: number
+  chunkChars?: number
+  /** Project-relative globs that are never indexed. */
+  excludeGlobs?: string[]
 }
 
 /**
@@ -268,6 +275,10 @@ export class RagIndex {
   private readonly maxFileBytes: number
   private readonly maxChunks: number
   private readonly maxIndexChars: number
+  private readonly chunkLines: number
+  private readonly chunkOverlapLines: number
+  private readonly chunkChars: number
+  private readonly excludeGlobs: string[]
 
   private files = new Map<string, PersistedFile>()
   private chunks = new Map<string, IndexedChunk>()
@@ -285,6 +296,10 @@ export class RagIndex {
     this.maxFileBytes = options.maxFileBytes ?? MAX_FILE_BYTES
     this.maxChunks = options.maxChunks ?? MAX_CHUNKS
     this.maxIndexChars = options.maxIndexChars ?? MAX_INDEX_CHARS
+    this.chunkLines = options.chunkLines ?? MAX_CHUNK_LINES
+    this.chunkOverlapLines = options.chunkOverlapLines ?? CHUNK_OVERLAP_LINES
+    this.chunkChars = options.chunkChars ?? MAX_CHUNK_CHARS
+    this.excludeGlobs = options.excludeGlobs ?? []
   }
 
   /** Forces the next `ensureFresh` to re-check the files. */
@@ -483,6 +498,7 @@ export class RagIndex {
     try {
       for await (const file of glob.scan({ cwd: this.root, onlyFiles: true, dot: false })) {
         const normalized = file.replace(/\\/g, "/")
+        if (isExcludedPath(normalized, this.excludeGlobs)) continue
         if (isIndexableFile(normalized)) candidates.push(normalized)
       }
     } catch (error) {
@@ -534,7 +550,7 @@ export class RagIndex {
     this.files.set(path, { path, ...info })
     if (looksBinary(data)) return false
 
-    const pieces = chunkText(data.toString("utf8"))
+    const pieces = chunkText(data.toString("utf8"), this.chunkLines, this.chunkChars, this.chunkOverlapLines)
     for (const piece of pieces) {
       if (this.chunks.size >= this.maxChunks || this.chars >= this.maxIndexChars) break
       const terms = termCounts(piece.text)

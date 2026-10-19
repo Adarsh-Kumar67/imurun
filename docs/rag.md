@@ -66,6 +66,10 @@ count, because a "line" in generated or minified code can be enormous. Chunks wi
 fewer than three tokens are dropped, so blank or trivial regions do not take up
 room.
 
+These are defaults, not laws: `rag.chunkLines`, `rag.chunkOverlapLines`, and
+`rag.chunkChars` change them, and a project with long minified data files or very
+short modules can tune the shape to suit.
+
 ## How text is tokenized
 
 The base tokenizer lowercases, splits on punctuation, drops single-character
@@ -111,14 +115,20 @@ Because a new session loads the snapshot, it starts warm. If the snapshot's
 recorded root does not match the project, it is ignored. A snapshot is also
 skipped if its shape version differs.
 
+`rag.watch: false` turns the automatic re-check off. The index is then only
+rebuilt when you ask — `/index`, `imurun rag index`, or a `write`/`edit` marking
+it stale — which is the setting for a very large tree on a slow disk, or a
+directory that changes constantly under something else's control. `imurun rag
+index` always refreshes regardless of the setting.
+
 ## Limits
 
-| Cap | Value |
-| --- | --- |
-| Indexed files | 3000 |
-| Bytes per file | 400 KB |
-| Chunks | 6000 |
-| Total indexed characters | 6 MB |
+| Cap | Value | Setting |
+| --- | --- | --- |
+| Indexed files | 3000 | `rag.maxFiles` |
+| Bytes per file | 400 KB | `rag.maxFileSizeKB` |
+| Chunks | 6000 | `rag.maxChunks` |
+| Total indexed characters | 6 MB | fixed |
 
 These are hard limits: past them the index simply covers fewer files. Files that
 were skipped because a budget was already spent still get their metadata recorded,
@@ -156,20 +166,70 @@ command exists so you can see what the index knows, warm it before a long sessio
 or work out why a search missed. See
 [CLI reference](cli-reference.md#rag) and [Slash commands](slash-commands.md).
 
+## Automatic context (auto-inject)
+
+`code_search` is the tool; auto-inject is the same index used *without* the model
+asking. Before a turn is sent, IMURUN searches the index with the user's message as
+the query and puts the best few chunks into the system prompt under a
+`## Project context` heading:
+
+```markdown
+## Project context
+
+Relevant project material, retrieved for this message. Cite paths when you use it.
+
+### src/parser.ts:41-96
+export function parse(input: string) { … }
+```
+
+This is what makes a local model feel like it knows the codebase rather than
+guessing at it: the material is on hand before the first token is generated, at no
+extra round trip.
+
+The knobs are `rag.autoInject` (on by default), `rag.maxInjectChunks` (6), and
+`rag.enabled`. Injection also needs the `code_search` tool to be present in the
+current agent's tool set — a role you have locked down to read-only tools gets no
+injected block either.
+
+The side panel names what was injected, so the provenance of an answer is visible
+rather than implied:
+
+```text
+ SOURCES  3
+ parser.ts:41
+ agent.ts:318
+ rag.ts:112
+```
+
+`tui.showRagSources: false` hides that section. The sources are also recorded on
+the turn's first assistant message, so resuming that session from `/session`
+brings the same list back rather than showing an empty panel.
+
 ## Configuration
 
-The `rag` section of `imurun.json` exists on the configuration surface (see
-[Configuration](configuration.md#rag)):
+The `rag` section of `imurun.json` (see
+[Configuration](configuration.md#rag)) — every field is read:
 
 ```jsonc
 {
   "rag": {
     "enabled": true,
     "watch": true,
-    "autoInject": true
+    "autoInject": true,
+    "maxInjectChunks": 6,
+    "maxFileSizeKB": 400,
+    "maxFiles": 3000,
+    "maxChunks": 6000,
+    "chunkLines": 60,
+    "chunkOverlapLines": 8,
+    "chunkChars": 1600,
+    "excludeGlobs": ["node_modules/**", ".git/**", "fixtures/**"]
   }
 }
 ```
 
-The running index uses its own fixed caps and freshness window, described above;
-the `rag` section is where the project-index settings are declared.
+`excludeGlobs` is *added* to the built-in ignore list, so `excludeGlobs: []` still
+skips `node_modules` and lock files; use it to exclude things specific to your
+project (fixtures, generated clients, another package's build output). Patterns are
+read like `.gitignore`: `vendor/**` matches a directory's contents, `*.generated.ts`
+matches at any depth, and a bare name matches anywhere in the tree.

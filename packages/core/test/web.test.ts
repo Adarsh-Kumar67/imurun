@@ -1,14 +1,22 @@
 import { describe, expect, test } from "bun:test"
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { ImurunConfig } from "@imurun/schema"
 import { createLogger } from "@imurun/util"
 import type { ToolContext } from "../src/tool/types"
 import {
+  cacheFetchedPage,
   decodeEntities,
   extractTitle,
   fetchPage,
   htmlToText,
+  parseBrave,
   parseDuckDuckGo,
+  parseSearxng,
   searchWeb,
   unwrapDuckDuckGoUrl,
+  webCachePath,
   webFetchTool,
   webSearchTool,
 } from "../src/tool/web"
@@ -162,5 +170,149 @@ describe("web tools", () => {
   test("titles a search call for the permission prompt", () => {
     expect(webSearchTool.title?.({ query: "hello" })).toContain("hello")
     expect(webFetchTool.title?.({ url: "https://x.dev" })).toContain("https://x.dev")
+  })
+})
+
+describe("search backends", () => {
+  test("searxng is asked in JSON and its results are read", async () => {
+    const body = JSON.stringify({
+      results: [
+        { title: "One", url: "https://one.example", content: "first snippet" },
+        { title: "", url: "https://two.example" },
+      ],
+    })
+    const calls: string[] = []
+    const fake = (async (url: string) => {
+      calls.push(url)
+      return { ok: true, status: 200, headers: new Headers({}), text: async () => body } as unknown as Response
+    }) as unknown as typeof fetch
+
+    const results = await searchWeb("how to x", {
+      fetchImpl: fake,
+      backend: "searxng",
+      searxngURL: "https://searx.example/",
+    })
+
+    expect(calls[0]).toBe(`https://searx.example/search?q=${encodeURIComponent("how to x")}&format=json`)
+    expect(results[0]).toEqual({ title: "One", url: "https://one.example", snippet: "first snippet" })
+    // A result with no title falls back to its URL rather than showing blank.
+    expect(results[1]!.title).toBe("https://two.example")
+  })
+
+  test("a missing SearXNG instance explains itself", async () => {
+    await expect(searchWeb("q", { backend: "searxng" })).rejects.toThrow("web.searxngURL")
+  })
+
+  test("brave sends its key and reads its response shape", async () => {
+    const body = JSON.stringify({ web: { results: [{ title: "B", url: "https://b.example", description: "desc" }] } })
+    let headers: Record<string, string> = {}
+    let called = ""
+    const fake = (async (url: string, init?: RequestInit) => {
+      called = url
+      headers = (init?.headers ?? {}) as Record<string, string>
+      return { ok: true, status: 200, headers: new Headers({}), text: async () => body } as unknown as Response
+    }) as unknown as typeof fetch
+
+    const results = await searchWeb("q", { fetchImpl: fake, backend: "brave", apiKey: "k123" })
+
+    expect(called).toContain("api.search.brave.com")
+    expect(headers["x-subscription-token"]).toBe("k123")
+    expect(results[0]).toEqual({ title: "B", url: "https://b.example", snippet: "desc" })
+  })
+
+  test("brave without a key explains itself", async () => {
+    await expect(searchWeb("q", { backend: "brave" })).rejects.toThrow("API key")
+  })
+
+  test("a malformed body is empty, not a crash", () => {
+    expect(parseSearxng("<html>nope</html>")).toEqual([])
+    expect(parseBrave("{}")).toEqual([])
+    expect(parseSearxng(JSON.stringify({ results: "not an array" }))).toEqual([])
+  })
+})
+
+describe("caching fetched pages", () => {
+  test("the cache path is recognisable and unique per URL", () => {
+    const a = webCachePath("C:/proj", "https://example.com/docs/intro")
+    const again = webCachePath("C:/proj", "https://example.com/docs/intro")
+    const other = webCachePath("C:/proj", "https://example.com/other/intro")
+    const posix = a.replace(/\\/g, "/")
+
+    expect(a).toBe(again)
+    expect(a).not.toBe(other)
+    expect(posix).toContain(".imurun/web-cache/example-com-docs-intro-")
+    expect(posix).toMatch(/\.md$/)
+  })
+
+  test("caching writes a readable markdown file inside the project", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "imurun-web-"))
+    const saved = await cacheFetchedPage(dir, {
+      url: "https://example.com/doc",
+      title: "Doc",
+      text: "The body text.",
+      truncated: false,
+    })
+
+    expect(saved.replace(/\\/g, "/")).toContain(".imurun/web-cache/")
+    const written = readFileSync(join(dir, saved), "utf8")
+    expect(written).toContain("# Doc")
+    expect(written).toContain("https://example.com/doc")
+    expect(written).toContain("The body text.")
+  })
+
+  test("the fetch tool caches only when the setting asks for it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "imurun-web-"))
+    const original = globalThis.fetch
+    globalThis.fetch = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/plain" }),
+        body: undefined,
+        text: async () => "page body",
+      }) as unknown as Response) as unknown as typeof fetch
+
+    try {
+      const off: ToolContext = {
+        sessionId: "s",
+        workingDir: dir,
+        log: createLogger("test"),
+        config: ImurunConfig.parse({}),
+      }
+      await webFetchTool.execute({ url: "https://example.com/a.txt" }, off)
+      expect(existsSync(join(dir, ".imurun", "web-cache"))).toBe(false)
+
+      const on: ToolContext = { ...off, config: ImurunConfig.parse({ web: { cacheFetches: true } }) }
+      const result = await webFetchTool.execute({ url: "https://example.com/b.txt" }, on)
+      expect(result.output).toContain("cached at")
+      expect(existsSync(join(dir, ".imurun", "web-cache"))).toBe(true)
+    } finally {
+      globalThis.fetch = original
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a page is read only up to the configured byte ceiling", async () => {
+    const encoder = new TextEncoder()
+    const chunks = [encoder.encode("x".repeat(100_000)), encoder.encode("y".repeat(100_000))]
+    let read = 0
+    const fake = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/plain" }),
+        body: {
+          getReader: () => ({
+            read: async () => (read < chunks.length ? { done: false, value: chunks[read++] } : { done: true, value: undefined }),
+            cancel: async () => {},
+          }),
+        },
+        text: async () => "unused",
+      }) as unknown as Response) as unknown as typeof fetch
+
+    const page = await fetchPage("https://example.com/big.txt", { fetchImpl: fake, maxBytes: 64 * 1024, maxChars: 500 })
+    // The ceiling was passed by the first chunk, so the second was never read.
+    expect(read).toBe(1)
+    expect(page.text.length).toBeLessThanOrEqual(500)
   })
 })

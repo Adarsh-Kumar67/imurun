@@ -78,10 +78,15 @@ without giving up the machine it runs on.
   interrupted downloads are swept up too.
 - **Persistent memory** — readable, editable notes that survive sessions, plus a
   summary of each session and a per-project progress ledger, all stored locally as
-  plain files. See [Memory](docs/memory.md).
+  plain files. Standing instructions are picked up as you type ("always use tabs
+  here"), personal details are remembered, and anything you ask it to keep as a
+  secret is encrypted at rest and never put in a prompt. See
+  [Memory](docs/memory.md).
 - **Offline, self-updating RAG** — your codebase is indexed locally and kept fresh
   as you work, so the agent can search everything you have written with no
-  internet, no embedding service, and no API key. See [RAG](docs/rag.md).
+  internet, no embedding service, and no API key. The best-matching pieces are put
+  in front of the model automatically, and the panel names the files they came
+  from. See [RAG](docs/rag.md).
 - **Full agent toolset** — read, write, edit, shell, glob, grep, project-wide
   search, web search, web fetching, sub-agents, and durable memory. See
   [Tools](docs/tools.md).

@@ -63,10 +63,25 @@ The interface has four parts:
 | `SESSION` | The short session id. |
 | `PLAN` | Progress through `.imurun/PLAN.md`, e.g. `3/7 steps`, when a plan exists. |
 | `TODOS` | The current checklist with glyphs, work-in-progress first, then open, then done. Only the first six are shown, with a `+n more` line. |
+| `SOURCES` | The files the project index fed into the current turn (path and line), up to five. This is the provenance of an answer: it is how you can tell *why* the model knows something. Cleared between turns, and hidden entirely with `tui.showRagSources: false`. |
+| `MEMORY` | How many notes and sessions memory holds, when there are any. Hidden with `tui.showMemoryUsage: false`. |
 | `SUBAGENTS` | Shown while one or more `task` subagents are running. |
 | `QUEUED` | Shown when messages are waiting behind the current turn. |
 
 Todo glyphs are `☐` open, `◐` in progress, `☑` done.
+
+### Themes
+
+`config.tui.theme` picks the palette:
+
+| Name | For |
+| --- | --- |
+| `imurun-dark` | The default, drawn for a dark terminal. |
+| `imurun-light` | Light terminals: the same hues, taken down in brightness. |
+| `none` | No color at all — for logs, pipes, and terminals that mangle escapes. |
+
+An unknown name falls back to `imurun-dark` and says so, rather than leaving the
+half-applied colors of the previous theme on screen.
 
 ### The footer
 

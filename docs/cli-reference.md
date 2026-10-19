@@ -291,7 +291,7 @@ Usage: imurun rag [status|index|search <query>|clear] [--path <fragment>] [--lim
 
 | Subcommand | Aliases | Does |
 | --- | --- | --- |
-| `status` | `info` | Files, chunks, size, last update, and snapshot path. |
+| `status` | `info` | Files, chunks, size, last update, snapshot path, and the `rag` settings in force. |
 | `index` | `refresh` | Build or update the index now. |
 | `search <query>` | `find`, `query` | Search the index. |
 | `clear` | | Delete the index and its snapshot. |

@@ -1,7 +1,7 @@
 /**
  * Tool types — the contract every IMURUN tool implements.
  */
-import type { AgentDefinition, ToolResult } from "@imurun/schema"
+import type { AgentDefinition, ImurunConfig, ToolResult } from "@imurun/schema"
 import type { Logger } from "@imurun/util"
 import type { ProgressLedger } from "../memory/ledger"
 
@@ -13,6 +13,12 @@ export interface ToolContext {
   agentId?: string
   signal?: AbortSignal
   log: Logger
+  /**
+   * The active configuration. Tools read it so a setting the docs describe is a
+   * setting that actually applies (indexing, memory, limits) rather than a
+   * declaration nothing consults.
+   */
+  config?: ImurunConfig
   /**
    * Key/value store of work in flight for this project. Tools that change the
    * project record what they did, so a later run can see where it got to.

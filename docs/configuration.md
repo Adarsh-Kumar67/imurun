@@ -26,6 +26,7 @@ Environment variables that affect behaviour:
 | `IMURUN_HOME` | Root of all IMURUN state (default `~/.imurun`). |
 | `IMURUN_LLAMA_VARIANT` | Prefer a specific llama.cpp build: `auto`, `vulkan`, `cuda`, `rocm`, `metal`, `cpu`. |
 | `GITHUB_TOKEN` | Sent when the engine installer queries GitHub releases, to avoid rate limits. |
+| `BRAVE_API_KEY` | Used by `web_search` when `web.searchBackend` is `brave` and `web.braveApiKey` is unset. |
 | Provider key variables | e.g. `OPENAI_API_KEY`; referenced from a provider as `{env:OPENAI_API_KEY}`. See [Providers](providers.md). |
 
 ## Top-level fields
@@ -87,8 +88,8 @@ Settings for the local inference daemon. See [Runtime](runtime.md).
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | boolean | `true` | Master switch for memory. |
-| `learnStyle` | boolean | `true` | Learn coding style from edits and generations. |
-| `crossSession` | boolean | `true` | Recall relevant summaries from past sessions. |
+| `learnStyle` | boolean | `true` | Notice standing instructions in your messages ("always use tabs") and remember them. |
+| `crossSession` | boolean | `true` | Recall relevant notes and session summaries from past sessions. Off means only the notes themselves are searched. |
 | `autoSummarize` | boolean | `true` | Summarize sessions automatically on close. |
 | `maxRecallEntries` | integer > 0 | `5` | How many recalled memories to include. |
 
@@ -96,17 +97,22 @@ See [Memory](memory.md).
 
 ## `rag`
 
+The project index. It is keyword-based (BM25), so it needs no embedding model,
+no GPU, and no network — which is the point on a local-first machine.
+
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | boolean | `true` | Master switch for the project index. |
-| `watch` | boolean | `true` | Watch project files and re-index incrementally. |
-| `autoInject` | boolean | `true` | Automatically inject retrieved context into prompts. |
-| `maxInjectChunks` | integer > 0 | `6` | Maximum chunks injected per prompt. |
-| `chunkSize` | integer > 0 | `800` | Target chunk size. |
-| `chunkOverlap` | integer ≥ 0 | `120` | Overlap between chunks. |
-| `maxFileSizeKB` | integer > 0 | `1024` | Skip files larger than this. |
-| `excludeGlobs` | string[] | `node_modules/**`, `.git/**`, `dist/**`, `build/**`, `out/**`, `*.min.*`, `*.lock` | Paths excluded from the index. |
-| `embeddingModel` | string | `all-MiniLM-L6-v2` | Embedding model name (configuration surface). |
+| `watch` | boolean | `true` | Re-check the project for changes before a search, so results stay current. Off means the index is only rebuilt by `/index` or `imurun rag index`. |
+| `autoInject` | boolean | `true` | Put the most relevant project material into the prompt automatically, before the model asks. |
+| `maxInjectChunks` | integer > 0 | `6` | Most chunks injected into one turn's prompt. |
+| `maxFileSizeKB` | integer > 0 | `400` | Skip files larger than this. |
+| `maxFiles` | integer > 0 | `3000` | Hard ceiling on files indexed. |
+| `maxChunks` | integer > 0 | `6000` | Hard ceiling on chunks held in memory. |
+| `chunkLines` | integer > 0 | `60` | Lines per chunk. |
+| `chunkOverlapLines` | integer ≥ 0 | `8` | Lines shared with the next chunk, so a definition split across the boundary is still found. |
+| `chunkChars` | integer > 0 | `1600` | Character cap per chunk. |
+| `excludeGlobs` | string[] | build dirs, lock files, `*.min.*` (see the schema) | Project-relative globs that are never indexed. Added to the built-in ignore list. |
 
 See [RAG](rag.md).
 
@@ -114,18 +120,19 @@ See [RAG](rag.md).
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `theme` | string | `imurun-dark` | Theme name. |
-| `showRagSources` | boolean | `true` | Show RAG source indicators on messages. |
-| `showMemoryUsage` | boolean | `true` | Show memory usage indicators on messages. |
+| `theme` | `imurun-dark` \| `imurun-light` \| `none` | `imurun-dark` | Palette. `none` turns off color entirely, for logs and pipes. |
+| `showRagSources` | boolean | `true` | Name the files the index fed into the last turn, in the panel. |
+| `showMemoryUsage` | boolean | `true` | Show how many notes and sessions memory holds, in the panel. |
 
 ## `web`
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `searchBackend` | `duckduckgo` \| `brave` \| `searxng` | `duckduckgo` | Search backend; `duckduckgo` needs no key. |
+| `searchBackend` | `duckduckgo` \| `brave` \| `searxng` | `duckduckgo` | Which engine `web_search` asks. `duckduckgo` needs no key. |
 | `searxngURL` | string | — | Base URL when the backend is `searxng`. |
-| `cacheFetches` | boolean | `true` | Cache fetched pages for later reuse. |
-| `maxPageKB` | integer > 0 | `2048` | Maximum page size to fetch. |
+| `braveApiKey` | string | — | Brave Search API key; `BRAVE_API_KEY` is used as a fallback. |
+| `cacheFetches` | boolean | `false` | Write fetched pages into `.imurun/web-cache/` so the project index can find them offline afterwards. Off by default: it puts files in your project. |
+| `maxPageKB` | integer > 0 | `2048` | Most of a page `web_fetch` downloads before it is cut off. |
 
 The web tools themselves are described in [Tools](tools.md#web-search-and-web-fetch).
 

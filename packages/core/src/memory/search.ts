@@ -47,6 +47,12 @@ export interface SearchOptions {
   projectPath?: string
   /** Kind prefixes that receive a relevance boost. */
   boostKinds?: string[]
+  /**
+   * Which document sources to search. Omit for both; `["note"]` is how a
+   * caller restricts recall to this machine's own notes rather than the
+   * digests of past sessions.
+   */
+  sources?: Array<"note" | "session">
 }
 
 const K1 = 1.2
@@ -112,7 +118,12 @@ export function bm25Search(docs: SearchDoc[], query: string, options: SearchOpti
 }
 
 /** Formats a hit as one line for the system prompt. */
-export function formatHit(hit: SearchHit): string {
+export function formatHit(hit: SearchHit, options: { maskSecrets?: boolean } = {}): string {
+  // A human-facing listing must not print a stored secret to the terminal, even
+  // though the model may recall the value when it actually needs it.
+  if (options.maskSecrets && hit.doc.kind === "credential") {
+    return "- (credential) \u2026 value kept encrypted \u2014 recall it when you need it"
+  }
   const text = hit.doc.text.replace(/\s+/g, " ").trim()
   const clipped = text.length > 240 ? `${text.slice(0, 239)}\u2026` : text
   return `- (${hit.doc.kind}) ${clipped}`

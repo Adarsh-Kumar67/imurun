@@ -42,10 +42,13 @@ export const MessageUsage = z.object({
 })
 export type MessageUsage = z.infer<typeof MessageUsage>
 
+/** A project-index hit that was put in front of the model for a turn. */
 export const RagSourceRef = z.object({
-  chunkId: z.string(),
-  filePath: z.string().optional(),
-  sessionId: z.string().optional(),
+  /** Project-relative path of the file the chunk came from. */
+  path: z.string(),
+  /** First and last line of the chunk, so the excerpt can be found again. */
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
   score: z.number(),
 })
 export type RagSourceRef = z.infer<typeof RagSourceRef>

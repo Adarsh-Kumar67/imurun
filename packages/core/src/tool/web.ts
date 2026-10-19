@@ -1,19 +1,26 @@
 /**
  * Web tools — search and read pages from the internet.
  *
- * Both tools are deliberately dependency-free and key-free: search goes through
- * DuckDuckGo's HTML endpoint, and fetch downloads the page and reduces it to
- * readable text. Everything is capped (bytes, characters, time) so a hostile or
- * enormous page cannot stall a run, and non-HTTP schemes are refused outright.
+ * The default path is deliberately dependency-free and key-free: search goes
+ * through DuckDuckGo's HTML endpoint, and fetch downloads the page and reduces
+ * it to readable text. `config.web.searchBackend` can point search at a SearXNG
+ * instance or at Brave instead, for people who prefer them or need a
+ * key-backed, terms-of-service-clean source.
+ *
+ * Everything is capped (bytes, characters, time) so a hostile or enormous page
+ * cannot stall a run, and non-HTTP schemes are refused outright.
  *
  * When the machine is offline the tools fail with a plain message rather than
  * hanging, which matters for a local-first agent.
  */
+import { mkdir, writeFile } from "node:fs/promises"
+import { dirname, join, relative } from "node:path"
+import { sha256 } from "@imurun/util"
 import type { ImurunTool } from "./types"
 import { fail, ok, optionalNumber, optionalString, requireString } from "./types"
 
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; IMURUN/0.1; +https://github.com/imurutz/imurun) local-first coding agent"
+  "Mozilla/5.0 (compatible; IMURUN/0.1; +https://imutechz.in) local-first coding agent"
 const MAX_BYTES = 2 * 1024 * 1024
 const DEFAULT_FETCH_CHARS = 12_000
 const MAX_FETCH_CHARS = 60_000
@@ -166,7 +173,7 @@ async function readCapped(response: Response, maxBytes = MAX_BYTES): Promise<str
   return new TextDecoder("utf-8", { fatal: false }).decode(merged)
 }
 
-async function timedFetch(url: string, fetchImpl: typeof fetch): Promise<Response> {
+async function timedFetch(url: string, fetchImpl: typeof fetch, extraHeaders: Record<string, string> = {}): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
@@ -177,6 +184,7 @@ async function timedFetch(url: string, fetchImpl: typeof fetch): Promise<Respons
         "user-agent": USER_AGENT,
         accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
         "accept-language": "en-US,en;q=0.9",
+        ...extraHeaders,
       },
     })
   } finally {
@@ -193,13 +201,81 @@ function networkError(error: unknown): string {
   return `Request failed: ${message}`
 }
 
+/** The search engines IMURUN can ask. */
+export type SearchBackend = "duckduckgo" | "brave" | "searxng"
+
+export interface WebSearchOptions {
+  limit?: number
+  fetchImpl?: typeof fetch
+  /** Which engine to ask; defaults to DuckDuckGo, which needs no key. */
+  backend?: SearchBackend
+  /** Base URL of the SearXNG instance, when the backend is searxng. */
+  searxngURL?: string
+  /** Brave Search API key, when the backend is brave. */
+  apiKey?: string
+}
+
+/** Reads a JSON search response into results, ignoring anything malformed. */
+function parseJsonResults(body: string, pick: (data: unknown) => unknown): SearchResult[] {
+  let data: unknown
+  try {
+    data = JSON.parse(body)
+  } catch {
+    return []
+  }
+  const list = pick(data)
+  if (!Array.isArray(list)) return []
+
+  const results: SearchResult[] = []
+  for (const item of list) {
+    const entry = item as { title?: unknown; url?: unknown; content?: unknown; description?: unknown }
+    if (typeof entry.url !== "string" || !entry.url) continue
+    const snippet = typeof entry.content === "string" ? entry.content : typeof entry.description === "string" ? entry.description : ""
+    results.push({
+      title: typeof entry.title === "string" && entry.title ? entry.title : entry.url,
+      url: entry.url,
+      snippet,
+    })
+  }
+  return results
+}
+
+/** Parses a SearXNG JSON response (`format=json`). */
+export function parseSearxng(body: string): SearchResult[] {
+  return parseJsonResults(body, (data) => (data as { results?: unknown }).results)
+}
+
+/** Parses a Brave Web Search API response. */
+export function parseBrave(body: string): SearchResult[] {
+  return parseJsonResults(body, (data) => (data as { web?: { results?: unknown } }).web?.results)
+}
+
 /** Searches the web and returns ranked results. Exported for tests and reuse. */
-export async function searchWeb(
-  query: string,
-  options: { limit?: number; fetchImpl?: typeof fetch } = {},
-): Promise<SearchResult[]> {
+export async function searchWeb(query: string, options: WebSearchOptions = {}): Promise<SearchResult[]> {
   const limit = Math.min(Math.max(options.limit ?? DEFAULT_RESULTS, 1), MAX_RESULTS)
   const doFetch = options.fetchImpl ?? fetch
+  const backend = options.backend ?? "duckduckgo"
+
+  if (backend === "searxng") {
+    if (!options.searxngURL) throw new Error("No SearXNG instance is configured — set web.searxngURL, or use the default backend.")
+    const base = options.searxngURL.replace(/\/+$/, "")
+    const url = `${base}/search?q=${encodeURIComponent(query)}&format=json`
+    const response = await timedFetch(url, doFetch, { accept: "application/json" })
+    if (!response.ok) throw new Error(`SearXNG returned HTTP ${response.status}.`)
+    return parseSearxng(await response.text()).slice(0, limit)
+  }
+
+  if (backend === "brave") {
+    if (!options.apiKey) throw new Error("Brave Search needs an API key — set web.braveApiKey (or BRAVE_API_KEY).")
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`
+    const response = await timedFetch(url, doFetch, {
+      accept: "application/json",
+      "x-subscription-token": options.apiKey,
+    })
+    if (!response.ok) throw new Error(`Brave Search returned HTTP ${response.status}.`)
+    return parseBrave(await response.text()).slice(0, limit)
+  }
+
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
   const response = await timedFetch(url, doFetch)
   if (!response.ok) throw new Error(`Search service returned HTTP ${response.status}.`)
@@ -217,9 +293,10 @@ export interface FetchedPage {
 /** Downloads a page and returns its readable text. Exported for tests and reuse. */
 export async function fetchPage(
   url: string,
-  options: { maxChars?: number; fetchImpl?: typeof fetch } = {},
+  options: { maxChars?: number; maxBytes?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<FetchedPage> {
   const maxChars = Math.min(Math.max(options.maxChars ?? DEFAULT_FETCH_CHARS, 500), MAX_FETCH_CHARS)
+  const maxBytes = Math.min(Math.max(options.maxBytes ?? MAX_BYTES, 64 * 1024), MAX_BYTES)
   const doFetch = options.fetchImpl ?? fetch
 
   let parsed: URL
@@ -236,7 +313,7 @@ export async function fetchPage(
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText} for ${parsed.toString()}`)
 
   const contentType = response.headers.get("content-type") ?? ""
-  const body = await readCapped(response)
+  const body = await readCapped(response, maxBytes)
 
   if (/^text\/plain/i.test(contentType)) {
     return { url: parsed.toString(), text: body.slice(0, maxChars), truncated: body.length > maxChars }
@@ -249,6 +326,43 @@ export async function fetchPage(
     text: text.slice(0, maxChars),
     truncated: text.length > maxChars,
   }
+}
+
+// ── Web cache ───────────────────────────────────────────────────────────────
+
+/** Project-relative directory fetched pages are cached in. */
+const WEB_CACHE_DIR = ".imurun/web-cache"
+
+/**
+ * Where a fetched page is cached. The name carries enough of the URL to be
+ * recognisable by eye, plus a hash so two pages with the same path cannot
+ * overwrite each other.
+ */
+export function webCachePath(workingDir: string, url: string): string {
+  const parsed = new URL(url)
+  const slug =
+    `${parsed.hostname}${parsed.pathname}`
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "page"
+  return join(workingDir, WEB_CACHE_DIR, `${slug}-${sha256(url).slice(0, 8)}.md`)
+}
+
+/**
+ * Writes a fetched page into the project, where the project index will find it.
+ *
+ * `web.cacheFetches` is what turns this on. It exists because re-reading a page
+ * the agent has already read is exactly the sort of thing a local-first agent
+ * should not do twice: once cached, the text is searchable offline through
+ * `code_search`, and no second request is needed. Returns the path for display.
+ */
+export async function cacheFetchedPage(workingDir: string, page: FetchedPage): Promise<string> {
+  const path = webCachePath(workingDir, page.url)
+  await mkdir(dirname(path), { recursive: true })
+  const title = page.title ?? page.url
+  const body = `# ${title}\n\nSource: ${page.url}\nFetched: ${new Date().toISOString()}\n\n${page.text}\n`
+  await writeFile(path, body, "utf8")
+  return relative(workingDir, path).replace(/\\/g, "/")
 }
 
 // ── Tools ───────────────────────────────────────────────────────────────────
@@ -269,11 +383,17 @@ export const webSearchTool: ImurunTool = {
     additionalProperties: false,
   },
   title: (args) => `search the web for "${String(args.query ?? "")}"`,
-  async execute(args) {
+  async execute(args, ctx) {
     const query = requireString(args, "query")
     const limit = optionalNumber(args, "limit") ?? DEFAULT_RESULTS
+    const web = ctx.config?.web
     try {
-      const results = await searchWeb(query, { limit })
+      const results = await searchWeb(query, {
+        limit,
+        backend: web?.searchBackend,
+        searxngURL: web?.searxngURL,
+        apiKey: web?.braveApiKey ?? process.env.BRAVE_API_KEY,
+      })
       if (results.length === 0) {
         return ok(`No results for "${query}". Try different words, or fetch a known URL with web_fetch.`)
       }
@@ -303,13 +423,23 @@ export const webFetchTool: ImurunTool = {
     additionalProperties: false,
   },
   title: (args) => `fetch ${String(args.url ?? "")}`,
-  async execute(args) {
+  async execute(args, ctx) {
     const url = requireString(args, "url")
     const maxChars = optionalNumber(args, "maxChars") ?? DEFAULT_FETCH_CHARS
+    const web = ctx.config?.web
     try {
-      const page = await fetchPage(url, { maxChars })
+      const page = await fetchPage(url, {
+        maxChars,
+        // A page bigger than the configured ceiling is read up to it, not in
+        // full: one enormous page must not eat the window.
+        maxBytes: web ? web.maxPageKB * 1024 : undefined,
+      })
       const header = page.title ? `# ${page.title}\n${page.url}\n\n` : `${page.url}\n\n`
-      const footer = page.truncated ? "\n\n[truncated — fetch a more specific URL or raise maxChars]" : ""
+      let footer = page.truncated ? "\n\n[truncated — fetch a more specific URL or raise maxChars]" : ""
+      if (web?.cacheFetches) {
+        const saved = await cacheFetchedPage(ctx.workingDir, page).catch(() => undefined)
+        if (saved) footer += `\n[cached at ${saved}; code_search will find it offline]`
+      }
       return ok(`${header}${page.text}${footer}`.trim(), { title: page.title ?? page.url })
     } catch (error) {
       return fail(networkError(error))

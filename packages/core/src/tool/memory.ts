@@ -4,12 +4,13 @@
  * Everything is written to `~/.imurun/memory/` so it survives sessions, is
  * readable by a human, and is retrievable offline (and by RAG later).
  */
+import { NOTE_KINDS } from "@imurun/schema"
 import { MemoryStore, type MemoryKind } from "../memory/store"
 import { formatHits } from "../memory/store"
 import { asArgs, fail, ok, optionalString, requireString } from "./types"
 import type { ImurunTool } from "./types"
 
-const VALID_KINDS: MemoryKind[] = ["fact", "preference", "todo", "note"]
+const VALID_KINDS: MemoryKind[] = [...NOTE_KINDS]
 
 let store: MemoryStore | undefined
 function memoryStore(): MemoryStore {
@@ -21,9 +22,11 @@ export const memoryTool: ImurunTool = {
   name: "memory",
   description:
     "Save and recall durable information across sessions: user preferences, project facts, " +
-    "decisions, and open todos. Use action=remember when the user says to remember something or " +
-    "when you learn a lasting project fact; action=recall to look something up before asking the " +
-    "user again; action=todos to list unfinished work; action=forget to delete a stale note.",
+    "decisions, open todos, and personal details the user wants remembered. Use action=remember when " +
+    "the user says to remember something or when you learn a lasting thing; action=recall to look " +
+    "something up before asking the user again; action=todos to list unfinished work; action=forget to " +
+    "delete a stale note. A kind=credential note is encrypted on disk and is never put into the prompt " +
+    "on its own — recall it when you actually need it.",
   parameters: {
     type: "object",
     properties: {
@@ -39,7 +42,8 @@ export const memoryTool: ImurunTool = {
       kind: {
         type: "string",
         enum: VALID_KINDS,
-        description: "For action=remember: the note kind (default note).",
+        description:
+          "For action=remember: fact, preference, user_style, credential, todo, or note (default note).",
       },
       tags: {
         type: "string",
@@ -86,7 +90,8 @@ export const memoryTool: ImurunTool = {
             projectPath: ctx.workingDir,
             sessionId: ctx.sessionId,
           })
-          return ok(`Remembered (${note.kind}): ${note.text}`)
+          const sealed = note.kind === "credential" ? " (encrypted on disk)" : ""
+          return ok(`Remembered (${note.kind})${sealed}: ${note.text}`)
         }
 
         case "recall": {

@@ -4,13 +4,14 @@
  * tool calls, permissions, persistence.
  */
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, existsSync, readFileSync } from "node:fs"
+import { mkdtempSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ImurunConfig } from "@imurun/schema"
 import {
   Agent,
   ImurunDatabase,
+  MemoryStore,
   PermissionManager,
   ProviderRegistry,
   SessionStore,
@@ -151,6 +152,9 @@ interface Harness {
 async function harness(serverUrl: string): Promise<Harness> {
   const home = mkdtempSync(join(tmpdir(), "imurun-e2e-"))
   const workingDir = mkdtempSync(join(tmpdir(), "imurun-work-"))
+  // Keep the agent's own state (memory, index snapshots) in the temp home: the
+  // run touches both now, and neither may leak into the real ~/.imurun.
+  process.env.IMURUN_HOME = home
   const store = await ImurunDatabase.open(join(home, "test.db"))
   const config = ImurunConfig.parse({
     providers: {
@@ -829,6 +833,148 @@ describe("agent loop", () => {
 
     expect(result.text).toBe('{"answer": 42}')
     expect(displayedText(events)).toBe('{"answer": 42}')
+    h.store.close()
+    server.close()
+  })
+})
+
+describe("what the agent brings into a turn", () => {
+  test("the project index finds the relevant file and says so", async () => {
+    const server = startFakeServer([textScript("It is in src/parser.ts.")])
+    const h = await harness(server.url)
+    mkdirSync(join(h.workingDir, "src"), { recursive: true })
+    writeFileSync(
+      join(h.workingDir, "src", "parser.ts"),
+      "// A nested expression parser built from a tokeniser and a recursive descent pass.\nexport function parse(input: string) { return input }\n",
+    )
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+    })
+
+    await agent.run({
+      sessionId: session.id,
+      input: "where is the nested expression parser?",
+      workingDir: h.workingDir,
+      onEvent,
+    })
+
+    // The panel is told, so the user can see what the answer was built from.
+    const rag = events.find((event) => event.type === "rag")
+    expect(rag).toBeDefined()
+    expect((rag as { hits: Array<{ path: string }> }).hits[0]!.path).toContain("parser.ts")
+
+    // And the model was handed it before it had to ask.
+    const system = (server.requests[0]!.messages as Array<{ role: string; content: string }>).find(
+      (message) => message.role === "system",
+    )
+    expect(system?.content).toContain("## Project context")
+    expect(system?.content).toContain("src/parser.ts")
+
+    // The turn records where it came from, so a resumed session shows the same
+    // provenance the live one did rather than an empty panel.
+    const saved = h.sessions.getMessages(session.id).filter((message) => message.role === "assistant")
+    expect(saved[0]!.metadata?.ragSources?.[0]!.path).toContain("parser.ts")
+    h.store.close()
+    server.close()
+  })
+
+  test("turning the index off keeps the prompt clean", async () => {
+    const server = startFakeServer([textScript("I will look for it.")])
+    const h = await harness(server.url)
+    h.config.rag.enabled = false
+    writeFileSync(join(h.workingDir, "notes.ts"), "export const marker = 'unmistakable-phrase'\n")
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+    })
+
+    await agent.run({
+      sessionId: session.id,
+      input: "where is unmistakable-phrase?",
+      workingDir: h.workingDir,
+      onEvent,
+    })
+
+    expect(events.some((event) => event.type === "rag")).toBe(false)
+    const system = (server.requests[0]!.messages as Array<{ role: string; content: string }>).find(
+      (message) => message.role === "system",
+    )
+    expect(system?.content).not.toContain("## Project context")
+    h.store.close()
+    server.close()
+  })
+
+  test("a standing rule in the message is remembered, and said back", async () => {
+    const server = startFakeServer([textScript("Understood.")])
+    const h = await harness(server.url)
+    const memory = new MemoryStore()
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      memory,
+    })
+
+    await agent.run({
+      sessionId: session.id,
+      input: "Always use tabs instead of spaces in this repo, please.",
+      workingDir: h.workingDir,
+      onEvent,
+    })
+
+    const notices = events.filter((event) => event.type === "notice" && /noted/i.test((event as { text: string }).text))
+    expect(notices).toHaveLength(1)
+
+    const notes = await memory.all()
+    const style = notes.find((note) => note.kind === "user_style")
+    expect(style?.text).toContain("Always use tabs")
+    h.store.close()
+    server.close()
+  })
+
+  test("learning style can be turned off without losing personal facts", async () => {
+    const server = startFakeServer([textScript("Noted.")])
+    const h = await harness(server.url)
+    h.config.memory.learnStyle = false
+    const memory = new MemoryStore()
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      memory,
+    })
+
+    await agent.run({
+      sessionId: session.id,
+      input: "Always use tabs in this repo, and my name is Shubham.",
+      workingDir: h.workingDir,
+    })
+
+    const notes = await memory.all()
+    expect(notes.some((note) => note.kind === "user_style")).toBe(false)
+    expect(notes.some((note) => note.kind === "fact" && /Shubham/.test(note.text))).toBe(true)
     h.store.close()
     server.close()
   })
