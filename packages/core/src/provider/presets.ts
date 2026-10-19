@@ -169,6 +169,24 @@ export function presetNeedsKey(preset: ProviderPreset): boolean {
 }
 
 /**
+ * Merges a provider's live model list with the ids already configured for it.
+ * The live list comes first and wins: it is the only thing that cannot go
+ * stale. A configured id the endpoint did not mention is kept — it may be an
+ * alias the user added, or a model the API hides from `/models` but still
+ * serves — unless the live list already contains it.
+ */
+export function mergeModelIds(discovered: string[], configured: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of [...discovered, ...configured]) {
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+/**
  * Which model ids to offer while adding a provider: whatever the endpoint is
  * actually serving, falling back to the curated hints above when it cannot be
  * reached. The live list always wins — it is the only thing that cannot go

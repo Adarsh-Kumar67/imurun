@@ -138,7 +138,13 @@ export interface AgentOptions {
   log?: Logger
 }
 
-const DEFAULT_MAX_STEPS = 40
+/**
+ * The step ceiling is off by default: a run continues until the model stops
+ * asking for tools, however many rounds that takes. `maxSteps` survives only as
+ * an explicit opt-in cap (`--max-steps`), and even a long run is announced
+ * rather than silently cut short.
+ */
+const LONG_RUN_NOTICE_STEPS = 100
 /** How many times a request may be recomputed for being over the window. */
 const MAX_CONTEXT_RETRIES = 2
 /** How many times an answer cut off by the output limit is carried on. */
@@ -245,7 +251,8 @@ export class Agent {
   async run(run: RunOptions): Promise<RunResult> {
     const { sessions, providers, tools, permissions, config } = this.options
     const activeTools = run.tools ?? tools
-    const maxSteps = run.maxSteps ?? DEFAULT_MAX_STEPS
+    // No cap unless the caller asked for one. A task runs to completion.
+    const maxSteps = run.maxSteps
 
     const session = sessions.get(run.sessionId)
     if (!session) throw new Error(`Session not found: ${run.sessionId}`)
@@ -430,10 +437,19 @@ export class Agent {
     let lastInspectionStep = 0
     let verifications = 0
 
-    while (steps < maxSteps) {
+    while (maxSteps === undefined || steps < maxSteps) {
       steps++
       run.signal?.throwIfAborted()
       run.onEvent?.({ type: "step-start", step: steps })
+      // Long is allowed; silent is not. Past a hundred rounds the user is told
+      // what is happening and how to stop it, and the run carries on.
+      if (steps === LONG_RUN_NOTICE_STEPS) {
+        run.onEvent?.({
+          type: "notice",
+          text: `still working \u2014 ${steps} steps so far \u00b7 esc to stop`,
+          tone: "info",
+        })
+      }
 
       let text = ""
       let streamedLength = 0
@@ -746,8 +762,13 @@ export class Agent {
       }
     }
 
-    if (steps >= maxSteps) {
-      this.log.warn(`run stopped after reaching maxSteps (${maxSteps})`)
+    if (maxSteps !== undefined && steps >= maxSteps) {
+      this.log.warn(`run stopped after reaching the explicit maxSteps cap (${maxSteps})`)
+      run.onEvent?.({
+        type: "notice",
+        text: `stopped at the --max-steps cap (${maxSteps}) \u2014 the task may be unfinished`,
+        tone: "warn",
+      })
     }
 
     // Refresh the session digest so RAG and future recalls see this turn —

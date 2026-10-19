@@ -36,6 +36,7 @@ Environment variables that affect behaviour:
 | `model` | string | — | Default model id, e.g. `qwen2.5-coder-7b`. |
 | `smallModel` | string | — | Small fast model for titles and summaries. |
 | `reasoningEffort` | `low` \| `medium` \| `high` \| `max` | — | Thinking budget sent to providers that accept one. |
+| `contextWindow` | integer > 0 | — | Override the context window (tokens) used for budgeting and shown in the panel. |
 | `providers` | map | `{}` | Provider definitions keyed by id. |
 | `runtime` | object | see below | Local inference runtime settings. |
 | `memory` | object | see below | Memory behaviour. |
@@ -52,6 +53,15 @@ Environment variables that affect behaviour:
 back" rather than a separately-defined level, so sending it is safe everywhere
 `high` works. The value is only sent when the provider takes one (see
 [Providers](providers.md#reasoning-effort)).
+
+### `contextWindow`
+
+IMURUN takes the window from, in order: this setting, then the window a local
+engine actually loaded, then any figure the provider publishes for the model
+(OpenRouter reports one; many endpoints do not). When none of those exist the
+window is genuinely unknown, so the panel says `window unknown` and prompts are
+budgeted conservatively rather than against an invented number. Set
+`contextWindow` when your endpoint does not advertise the model's real window.
 
 ## `runtime`
 

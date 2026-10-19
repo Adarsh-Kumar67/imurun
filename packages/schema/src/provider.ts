@@ -44,6 +44,12 @@ export const ProviderInfo = z.object({
   /** Human-readable detail, e.g. loaded model or last error. */
   detail: z.string().optional(),
   models: z.array(z.string()).default([]),
+  /**
+   * Context window (in tokens) per model id, when the endpoint publishes one —
+   * OpenRouter reports `context_length`, some servers report `max_model_len`.
+   * Absent means "not advertised", not "zero".
+   */
+  modelContext: z.record(z.string(), z.number()).optional(),
 })
 export type ProviderInfo = z.infer<typeof ProviderInfo>
 

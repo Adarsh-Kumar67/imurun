@@ -61,7 +61,7 @@ progress, reasoning, tool cards, and notices go to stderr, so output is clean
 when piped.
 
 ```
-Usage: imurun run "<task>" [--model <ref>] [--agent <id>] [--yes] [--session <id>] [--dir <path>] [--no-install]
+Usage: imurun run "<task>" [--model <ref>] [--agent <id>] [--yes] [--session <id>] [--dir <path>] [--no-install] [--max-steps <n>]
 ```
 
 | Option | Short | Type | Description |
@@ -73,6 +73,7 @@ Usage: imurun run "<task>" [--model <ref>] [--agent <id>] [--yes] [--session <id
 | `--dir` | | string | Working directory (default: current). |
 | `--quiet` | `-q` | boolean | Only print the final answer. |
 | `--no-install` | | boolean | Never auto-install a model, even when none is present. |
+| `--max-steps` | | string | Optional cap on model↔tool rounds. Omitted, a run continues until the model stops asking for tools. |
 
 Behaviour worth knowing:
 

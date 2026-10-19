@@ -293,7 +293,12 @@ export class TuiApp {
   private readonly queue = new MessageQueue()
   private agentSwitch?: { from: string; to: string; startedAt: number }
   private contextUsed = 0
-  private contextMax = 32768
+  /** The active model's context window in tokens; undefined until it is known. */
+  private contextMax: number | undefined
+  /** Windows learned from providers that publish them, keyed "provider/model". */
+  private readonly providerModelContext = new Map<string, number>()
+  /** Models already asked about, so an unadvertised window is probed once. */
+  private readonly contextProbed = new Set<string>()
   private todos: SidebarTodo[] = []
   /** The plan as stored, so /todo can act on it by number. */
   private todoItems: Todo[] = []
@@ -1828,11 +1833,19 @@ export class TuiApp {
       items.push({ id: "__remove__", label: "Delete an installed model\u2026", detail: "free disk space", keywords: "remove rm" })
     }
 
-    // Models on configured cloud providers sit above the fold so "which models
-    // did that key give me" is answered by /model itself.
-    for (const provider of this.providers.list()) {
-      if (provider.kind !== "api") continue
-      if (provider.models.length === 0) {
+    // Models on configured cloud providers: ask each provider what it is
+    // serving *now*, so the picker offers its real list rather than the handful
+    // of hints written into the config. A provider that does not answer keeps
+    // whatever is configured for it.
+    const apiProviders = this.providers.list().filter((p) => p.kind === "api" && p.enabled)
+    if (apiProviders.length > 0) this.pushNotice("asking providers which models they have\u2026", "info")
+    const probed = await Promise.all(
+      apiProviders.map(async (provider) => ({ provider, info: await probeProvider(provider, this.config) })),
+    )
+    for (const { provider, info } of probed) {
+      this.rememberProviderContext(provider.id, info.modelContext)
+      const models = info.status === "ready" ? info.models : provider.models
+      if (models.length === 0) {
         items.push({
           id: `__provider__${provider.id}`,
           label: `${provider.id}/…`,
@@ -1842,7 +1855,7 @@ export class TuiApp {
         })
         continue
       }
-      for (const model of provider.models) {
+      for (const model of models) {
         const ref = `${provider.id}/${model}`
         items.push({
           id: ref,
@@ -2381,6 +2394,7 @@ export class TuiApp {
   /** Switches to a cloud model: nothing to load, just remember and persist it. */
   private useProviderModel(ref: string): void {
     this.modelRef = ref
+    this.contextMax = this.config.contextWindow ?? this.providerModelContext.get(ref)
     this.sessions.update(this.session.id, { model: ref })
     void patchGlobalConfig({ model: ref }).catch(() => {})
     this.pushNotice(`model set to ${ref}`, "ok")
@@ -2466,20 +2480,29 @@ export class TuiApp {
 
     // Cloud models, so "which models did that key give me" is answered here.
     const cloud = this.providers.list().filter((provider) => provider.kind === "api" && provider.enabled)
+    const probedCloud = await Promise.all(
+      cloud.map(async (provider) => ({ provider, info: await probeProvider(provider, this.config) })),
+    )
     this.print()
     this.print(`  ${theme.bold("Online providers")}`)
     if (cloud.length === 0) {
       this.print(theme.dim("  none \u2014 /provider to add one (OpenAI, Anthropic, Google, Groq, NVIDIA\u2026)"))
     } else {
-      for (const provider of cloud) {
+      for (const { provider, info } of probedCloud) {
+        this.rememberProviderContext(provider.id, info.modelContext)
+        const models = info.status === "ready" ? info.models : provider.models
+        const reach =
+          info.status === "ready"
+            ? theme.dim(`${models.length} models`)
+            : theme.warn(info.detail ?? info.status)
         const key = provider.apiKey ? theme.ok("key set") : theme.warn("no key")
-        this.print(`    ${theme.accent(provider.id.padEnd(30))} ${theme.dim(`${key} \u00b7 ${provider.type}`)}`)
-        for (const model of provider.models.slice(0, 6)) {
+        this.print(`    ${theme.accent(provider.id.padEnd(30))} ${theme.dim(`${key} \u00b7 ${provider.type}`)} ${reach}`)
+        for (const model of models.slice(0, 6)) {
           const ref = `${provider.id}/${model}`
           const active = ref === this.modelRef ? theme.ok(` ${sym.bullet}`) : "  "
           this.print(`      ${active} ${theme.dim(ref)}`)
         }
-        if (provider.models.length > 6) this.print(theme.dim(`        \u2026 ${provider.models.length - 6} more`))
+        if (models.length > 6) this.print(theme.dim(`        \u2026 ${models.length - 6} more \u00b7 /model to pick`))
       }
     }
 
@@ -3262,11 +3285,50 @@ export class TuiApp {
       await this.refreshTodos()
       const status = await this.runtime.status().catch(() => undefined)
       const runtimeContext = status?.running ? status.state?.contextSize : undefined
-      if (runtimeContext && runtimeContext > 0) this.contextMax = runtimeContext
+      this.contextMax = await this.resolveContextMax(runtimeContext)
     } catch {
       /* the sidebar is cosmetic — never let it break a turn */
     }
     this.scheduleRender()
+  }
+
+  /**
+   * The context window to budget and show. Order of truth: an explicit
+   * `contextWindow` in config, then the window the local engine actually
+   * loaded, then a figure the provider publishes for the model. When none
+   * exist the window is genuinely unknown and the panel says so, rather than
+   * showing a made-up 32k.
+   */
+  private async resolveContextMax(runtimeContext?: number): Promise<number | undefined> {
+    const override = this.config.contextWindow
+    if (override && override > 0) return override
+    if (runtimeContext && runtimeContext > 0) return runtimeContext
+
+    const ref = this.modelRef
+    if (!ref) return undefined
+    const cached = this.providerModelContext.get(ref)
+    if (cached) return cached
+
+    const providerId = ref.split("/")[0] ?? ""
+    const provider = this.providers.list().find((p) => p.id === providerId && p.kind === "api")
+    if (!provider) return undefined
+    // Ask once per model: an endpoint that does not advertise a window will not
+    // start advertising one on the next sidebar tick.
+    if (this.contextProbed.has(ref)) return undefined
+    this.contextProbed.add(ref)
+
+    const info = await probeProvider(provider, this.config).catch(() => undefined)
+    if (!info || info.status !== "ready") return undefined
+    this.rememberProviderContext(provider.id, info.modelContext)
+    return this.providerModelContext.get(ref)
+  }
+
+  /** Caches context windows a provider advertised in its model list. */
+  private rememberProviderContext(providerId: string, modelContext?: Record<string, number>): void {
+    if (!modelContext) return
+    for (const [id, size] of Object.entries(modelContext)) {
+      if (size > 0) this.providerModelContext.set(`${providerId}/${id}`, size)
+    }
   }
 
   /**

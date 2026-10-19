@@ -116,6 +116,12 @@ export const ImurunConfig = z.object({
   smallModel: z.string().optional(),
   /** Thinking budget sent to providers that take a `reasoning_effort`. */
   reasoningEffort: ReasoningEffort.optional(),
+  /**
+   * Override the context window (tokens) used for budgeting and shown in the
+   * panel. Set this when a model's real window is not advertised by its
+   * endpoint, so IMURUN neither under- nor over-fills it.
+   */
+  contextWindow: z.number().int().positive().optional(),
   /** Provider definitions, keyed by provider id. */
   providers: z.record(z.string(), ProviderConfig).default({}),
   runtime: RuntimeConfig.prefault({}),

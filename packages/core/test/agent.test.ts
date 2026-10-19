@@ -442,6 +442,107 @@ describe("agent loop", () => {
     server.close()
   })
 
+  test("there is no step cap by default: the run continues past 40 rounds", async () => {
+    const argsJson = JSON.stringify({ path: "loop.txt", content: "again" })
+    // a tool call for 45 rounds, then a plain answer — the old default cap was 40
+    const scripts = [
+      ...Array.from({ length: 45 }, () => toolCallScript("call_1", "write", argsJson)),
+      textScript("finished at last"),
+    ]
+    const server = startFakeServer(scripts)
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      onPermission: async () => true,
+    })
+
+    const result = await agent.run({
+      sessionId: session.id,
+      input: "keep going",
+      workingDir: h.workingDir,
+      verifyChanges: false,
+    })
+
+    expect(result.steps).toBe(46)
+    expect(result.text).toContain("finished at last")
+    h.store.close()
+    server.close()
+  })
+
+  test("an explicit maxSteps cap still stops a runaway loop", async () => {
+    const argsJson = JSON.stringify({ path: "loop.txt", content: "again" })
+    const server = startFakeServer([toolCallScript("call_1", "write", argsJson)])
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      onPermission: async () => true,
+    })
+
+    const result = await agent.run({
+      sessionId: session.id,
+      input: "loop forever",
+      workingDir: h.workingDir,
+      maxSteps: 5,
+      verifyChanges: false,
+      onEvent,
+    })
+
+    expect(result.steps).toBe(5)
+    // the user is told the cap was hit, not left wondering why it stopped
+    const notice = events.find((event) => event.type === "notice" && event.text.includes("max-steps"))
+    expect(notice).toBeDefined()
+    h.store.close()
+    server.close()
+  })
+
+  test("a very long run is announced, not blocked", async () => {
+    const argsJson = JSON.stringify({ path: "loop.txt", content: "again" })
+    const scripts = [
+      ...Array.from({ length: 100 }, () => toolCallScript("call_1", "write", argsJson)),
+      textScript("done"),
+    ]
+    const server = startFakeServer(scripts)
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      onPermission: async () => true,
+    })
+
+    const result = await agent.run({
+      sessionId: session.id,
+      input: "keep going",
+      workingDir: h.workingDir,
+      verifyChanges: false,
+      onEvent,
+    })
+
+    expect(result.steps).toBe(101)
+    const notice = events.find((event) => event.type === "notice" && event.text.includes("still working"))
+    expect(notice).toBeDefined()
+    h.store.close()
+    server.close()
+  })
+
   test("an answer cut off by the output limit is carried on, not dropped", async () => {
     const server = startFakeServer([
       lengthScript("The parser reads the first token", " and then"),

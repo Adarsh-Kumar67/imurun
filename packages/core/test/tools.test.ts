@@ -74,14 +74,16 @@ describe("write tool", () => {
     expect(result.ok).toBe(false)
   })
 
-  test("refuses a single oversized write and says to append instead", async () => {
-    const huge = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n")
+  test("writes a large file in a single call, with no line cap", async () => {
+    const body = ["function big() {"]
+    for (let i = 0; i < 500; i++) body.push(`  const v${i} = ${i}`)
+    body.push("  return 0", "}")
+    const huge = body.join("\n")
     const result = await writeTool.execute({ path: "big.ts", content: huge, mode: "create" }, ctx)
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain("Refused")
-    expect(result.error).toContain("append")
-    // nothing was written, so the model can retry safely in pieces
-    expect(existsSync(join(dir, "big.ts"))).toBe(false)
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("Created")
+    expect(readFileSync(join(dir, "big.ts"), "utf8")).toBe(huge)
+    expect(existsSync(join(dir, "big.ts"))).toBe(true)
   })
 
   test("a small write still goes through unchanged", async () => {
@@ -89,6 +91,35 @@ describe("write tool", () => {
     const result = await writeTool.execute({ path: "small.ts", content: small, mode: "create" }, ctx)
     expect(result.ok).toBe(true)
     expect(readFileSync(join(dir, "small.ts"), "utf8")).toBe(small)
+  })
+
+  test("flags a structurally unfinished code file so the model can continue", async () => {
+    const cut = "export function half() {\n  const a = [1, 2"
+    const result = await writeTool.execute({ path: "half.ts", content: cut, mode: "create" }, ctx)
+    // the text lands — the note is what turns a cut-off into a next step
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("unfinished")
+    expect(result.output).toContain("append")
+    expect(readFileSync(join(dir, "half.ts"), "utf8")).toBe(cut)
+  })
+
+  test("flags invalid JSON as incomplete", async () => {
+    const result = await writeTool.execute({ path: "broken.json", content: '{\n  "a": 1,\n', mode: "create" }, ctx)
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("not valid JSON")
+  })
+
+  test("does not flag prose for unmatched brackets", async () => {
+    const prose = "Notes (unfinished\n\n- a [bracket\n"
+    const result = await writeTool.execute({ path: "notes.md", content: prose, mode: "create" }, ctx)
+    expect(result.ok).toBe(true)
+    expect(result.output).not.toContain("unfinished")
+  })
+
+  test("a complete file carries no warning in its result data", async () => {
+    const result = await writeTool.execute({ path: "ok.ts", content: "export const a = 1\n", mode: "create" }, ctx)
+    expect(result.ok).toBe(true)
+    expect((result.data as { warning?: string }).warning).toBeUndefined()
   })
 
   test("append adds to the end, inserting a newline when one is missing", async () => {

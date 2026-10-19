@@ -13,6 +13,7 @@ import type { LanguageModel } from "ai"
 import type { ImurunConfig, ProviderConfig, ProviderInfo } from "@imurun/schema"
 import { resolveEnvRef } from "@imurun/schema"
 import { logger, withRetry } from "@imurun/util"
+import { mergeModelIds } from "./presets"
 
 export interface ResolvedModel {
   provider: ProviderConfig
@@ -104,6 +105,20 @@ export function supportsReasoningEffort(provider: ProviderConfig): boolean {
   return provider.type !== "anthropic" && provider.type !== "google"
 }
 
+/**
+ * Reads a context-window figure out of one `/models` entry. Different
+ * OpenAI-compatible servers name the field differently; a value we cannot
+ * recognise is simply left out, so the caller falls back rather than guessing.
+ */
+export function readModelContext(entry: Record<string, unknown>): number | undefined {
+  const keys = ["context_length", "context_window", "max_context_length", "max_model_len", "max_input_tokens"]
+  for (const key of keys) {
+    const value = entry[key]
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value
+  }
+  return undefined
+}
+
 /** Checks whether a local/provider endpoint is reachable. */
 export async function probeProvider(provider: ProviderConfig, config: ImurunConfig): Promise<ProviderInfo> {
   if (!provider.enabled) {
@@ -127,11 +142,24 @@ export async function probeProvider(provider: ProviderConfig, config: ImurunConf
       return { config: provider, status: "error", detail: `HTTP ${response.status}`, models: provider.models }
     }
     const body = (await response.json()) as { data?: Array<{ id?: string }> }
-    const discovered = (body.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id))
+    const entries = (body.data ?? []) as Array<Record<string, unknown>>
+    const discovered = entries
+      .map((m) => (typeof m.id === "string" ? m.id : undefined))
+      .filter((id): id is string => Boolean(id))
+    const modelContext: Record<string, number> = {}
+    for (const entry of entries) {
+      if (typeof entry.id !== "string") continue
+      const size = readModelContext(entry)
+      if (size) modelContext[entry.id] = size
+    }
     return {
       config: provider,
       status: "ready",
-      models: provider.models.length > 0 ? provider.models : discovered,
+      // The live list is the truth; configured ids are appended so a saved
+      // alias is not lost. `/models` and the picker then offer everything the
+      // endpoint actually serves, not just what was written into the config.
+      models: mergeModelIds(discovered, provider.models),
+      ...(Object.keys(modelContext).length > 0 ? { modelContext } : {}),
     }
   } catch (error) {
     return {

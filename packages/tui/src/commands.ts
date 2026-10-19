@@ -106,7 +106,7 @@ const COMMANDS: SlashCommand[] = [
   },
   {
     name: "models",
-    summary: "List installed models and machine recommendations",
+    summary: "List installed models, machine recommendations, and every model your providers serve",
     run(app) {
       return app.showModels()
     },

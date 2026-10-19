@@ -84,6 +84,20 @@ describe("sidebarLines", () => {
     expect(plain).toContain("not loaded")
   })
 
+  test("says the window is unknown rather than inventing one", () => {
+    const plain = sidebarLines({ ...state, context: { used: 13_700 } }).map(stripAnsi).join("\n")
+    expect(plain).toContain("14k tok used")
+    expect(plain).toContain("window unknown")
+    expect(plain).not.toContain("33k")
+    expect(stripAnsi(sidebarSummary({ ...state, context: { used: 13_700 } }))).toContain("ctx unknown")
+  })
+
+  test("a real window is shown as a bar with a percentage", () => {
+    const plain = sidebarLines({ ...state, context: { used: 65_536, max: 131_072 } }).map(stripAnsi).join("\n")
+    expect(plain).toContain("50%")
+    expect(plain).toContain("66k / 131k tok")
+  })
+
   test("shows the written plan's progress when there is one", () => {
     const withPlan = sidebarLines({ ...state, plan: { done: 2, total: 5 } }).map(stripAnsi).join("\n")
     expect(withPlan).toContain("PLAN")

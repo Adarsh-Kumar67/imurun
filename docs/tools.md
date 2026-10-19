@@ -62,13 +62,14 @@ Write content to a file, creating it (and parent directories) if needed.
 newline first if the file does not end with one); `overwrite` replaces the file.
 Writes are atomic. The tool records the file in the project ledger.
 
-The important limit: a single call may write at most **80 lines** and **12000
-characters**. An oversized call is refused — not truncated — because a local
-model that tries to emit a whole file in one call is usually cut off by the
-output limit before anything reaches disk. The refusal explains how to do it
-instead: create the file with the first few lines, then append the rest a few
-lines at a time. A write or edit also marks the project's RAG index stale so the
-next search sees the new contents.
+There is no size limit: write the whole file in one call when the model can emit
+it. If its output is cut off mid-call, that call never executes and nothing
+reaches disk — then create the file with the first section and append the rest
+with `mode: "append"`. After a write the tool checks what landed and, for
+code-like files, says so when the result looks structurally unfinished (an
+unclosed brace, an unterminated string, invalid JSON), so the model can continue
+instead of running a broken file. A write or edit also marks the project's RAG
+index stale so the next search sees the new contents.
 
 ## edit
 

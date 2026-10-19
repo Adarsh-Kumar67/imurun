@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { PROVIDER_PRESETS, getProviderPreset, providerModelOptions } from "../src/provider/presets"
+import { PROVIDER_PRESETS, getProviderPreset, mergeModelIds, providerModelOptions } from "../src/provider/presets"
+import { readModelContext } from "../src/provider/registry"
 import { patchGlobalConfig, removeGlobalConfigEntry } from "../src/config/loader"
 
 /** Points IMURUN_HOME at a scratch directory and returns its path. */
@@ -73,6 +74,43 @@ describe("model options while adding a provider", () => {
 
   test("an empty but reachable list still falls back rather than offering nothing", () => {
     expect(providerModelOptions(openai, { status: "ready", models: [] })).toEqual(openai.models)
+  })
+})
+
+describe("reading a context window out of a model entry", () => {
+  test("recognises the common field names", () => {
+    expect(readModelContext({ id: "a", context_length: 131_072 })).toBe(131_072)
+    expect(readModelContext({ id: "b", context_window: 32_768 })).toBe(32_768)
+    expect(readModelContext({ id: "c", max_model_len: 8192 })).toBe(8192)
+  })
+
+  test("ignores anything that is not a usable number", () => {
+    expect(readModelContext({ id: "d" })).toBeUndefined()
+    expect(readModelContext({ id: "e", context_length: "big" })).toBeUndefined()
+    expect(readModelContext({ id: "f", context_length: 0 })).toBeUndefined()
+    expect(readModelContext({ id: "g", context_length: -1 })).toBeUndefined()
+  })
+})
+
+describe("merging a live provider list with the configured ids", () => {
+  test("the live list comes first", () => {
+    expect(mergeModelIds(["b", "a"], [])).toEqual(["b", "a"])
+  })
+
+  test("a configured id the endpoint did not mention is kept", () => {
+    expect(mergeModelIds(["a", "b"], ["my-alias"])).toEqual(["a", "b", "my-alias"])
+  })
+
+  test("an id in both lists appears once", () => {
+    expect(mergeModelIds(["a", "b"], ["b", "c"])).toEqual(["a", "b", "c"])
+  })
+
+  test("blank ids are dropped", () => {
+    expect(mergeModelIds(["a"], ["", "b"])).toEqual(["a", "b"])
+  })
+
+  test("two empty lists merge to nothing", () => {
+    expect(mergeModelIds([], [])).toEqual([])
   })
 })
 

@@ -55,7 +55,7 @@ The interface has four parts:
 
 | Section | Contents |
 | --- | --- |
-| `CONTEXT` | A usage bar, the percentage, and used/max tokens. Turns red past 85% and yellow past 60%. |
+| `CONTEXT` | A usage bar, the percentage, and used/max tokens. Turns red past 85% and yellow past 60%. The max is the model's **real** window — the size a local engine actually loaded, or one the provider publishes. When neither is known it reads `window unknown` rather than a made-up number. Set [`contextWindow`](configuration.md#contextwindow) to supply one. |
 | `AGENT` | The active agent id. |
 | `MODEL` | The active model reference, plus the reasoning `effort` when one is set and the provider accepts one. |
 | `PERMISSIONS` | The approval mode: `auto`, `manual`, or `readonly`. |

@@ -19,6 +19,7 @@ import {
   loadAgents,
   loadConfigSafe,
   loadSkills,
+  probeProvider,
   restrictToolRegistry,
 } from "@imurun/core"
 import type { AgentEvent } from "@imurun/core"
@@ -48,6 +49,11 @@ export const runCommand: Command = {
     { name: "dir", type: "string", description: "Working directory (default: current)" },
     { name: "quiet", short: "q", type: "boolean", description: "Only print the final answer" },
     { name: "no-install", type: "boolean", description: "Never auto-install a model, even when none is present" },
+    {
+      name: "max-steps",
+      type: "string",
+      description: "Optional safety cap on model\u2194tool rounds (default: no cap)",
+    },
   ],
 
   async run({ args, options }) {
@@ -231,12 +237,22 @@ export const runCommand: Command = {
     }
 
     // Everything the agent sends is budgeted against the window the engine
-    // actually loaded, so a long one-shot task trims itself instead of being
-    // refused by the runtime.
-    let contextWindow = resolution.target?.contextLength
+    // actually loaded. An explicit config override wins; for an API model that
+    // is neither local nor configured, ask the provider what it publishes.
+    let contextWindow = config.contextWindow ?? resolution.target?.contextLength
     if (localSession) {
       const status = await localSession.manager.status().catch(() => undefined)
       if (status?.state?.contextSize && status.state.contextSize > 0) contextWindow = status.state.contextSize
+    } else if (!contextWindow) {
+      try {
+        const resolvedApi = providers.resolve(modelRef)
+        if (resolvedApi.provider.kind === "api") {
+          const info = await probeProvider(resolvedApi.provider, config).catch(() => undefined)
+          contextWindow = info?.modelContext?.[resolvedApi.modelId]
+        }
+      } catch {
+        /* a resolution error is reported by the agent itself */
+      }
     }
 
     try {
@@ -248,6 +264,7 @@ export const runCommand: Command = {
         agentId: activeAgent.id,
         role,
         contextWindow,
+        maxSteps: parseMaxSteps(options["max-steps"]),
         onEvent,
       })
 
@@ -279,6 +296,16 @@ export const runCommand: Command = {
       store.close()
     }
   },
+}
+
+/**
+ * `--max-steps N` is an opt-in safety cap. Anything that is not a positive
+ * integer means "no cap" — the default — rather than a silent zero.
+ */
+function parseMaxSteps(value: unknown): number | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
 /**

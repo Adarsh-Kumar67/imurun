@@ -23,8 +23,12 @@ export interface SidebarState {
   session: string
   workingDir: string
   permissions: string
-  /** Estimated context usage for the active session. */
-  context?: { used: number; max: number }
+  /**
+   * Estimated context usage for the active session. `max` is the model's real
+   * window when it is known; when it is not, the panel says so rather than
+   * inventing a number.
+   */
+  context?: { used: number; max?: number }
   /** Thinking effort, shown only when the provider accepts one. */
   effort?: string
   /** Steps of the written plan (`.imurun/PLAN.md`), when there is one. */
@@ -98,14 +102,15 @@ export function sidebarLines(state: SidebarState): string[] {
   // context window
   lines.push(title("context", width))
   if (state.context) {
-    const { bar, percent } = contextBar(state.context.used, state.context.max, Math.max(inner - 6, 6))
-    lines.push(value(`${bar} ${theme.dim(`${percent}%`)}`, width))
-    lines.push(
-      value(
-        theme.dim(`${formatTokens(state.context.used)} / ${formatTokens(state.context.max)} tok`),
-        width,
-      ),
-    )
+    const max = state.context.max && state.context.max > 0 ? state.context.max : undefined
+    if (max) {
+      const { bar, percent } = contextBar(state.context.used, max, Math.max(inner - 6, 6))
+      lines.push(value(`${bar} ${theme.dim(`${percent}%`)}`, width))
+      lines.push(value(theme.dim(`${formatTokens(state.context.used)} / ${formatTokens(max)} tok`), width))
+    } else {
+      lines.push(value(theme.dim(`${formatTokens(state.context.used)} tok used`), width))
+      lines.push(value(theme.dim("window unknown"), width))
+    }
   } else {
     lines.push(value(theme.dim("not loaded"), width))
   }
@@ -181,7 +186,10 @@ export function sidebarLines(state: SidebarState): string[] {
 /** A one-line summary of the panel, used by tests and the status bar. */
 export function sidebarSummary(state: SidebarState): string {
   const bits = [`agent ${state.agent}`, `model ${state.model ?? "none"}`, `perm ${state.permissions}`]
-  if (state.context) bits.push(`ctx ${Math.round((state.context.used / Math.max(state.context.max, 1)) * 100)}%`)
+  if (state.context) {
+    const max = state.context.max && state.context.max > 0 ? state.context.max : undefined
+    bits.push(max ? `ctx ${Math.round((state.context.used / max) * 100)}%` : "ctx unknown")
+  }
   if (state.todos.length) bits.push(`${state.todos.length} todo(s)`)
   if (state.queue) bits.push(`${state.queue} queued`)
   return bits.join(" \u00b7 ")
