@@ -1,7 +1,8 @@
 /**
- * Built-in skill catalog — 50 ready-to-use skills covering the tasks a coding
- * agent is actually asked to do: building web apps, shaping APIs, testing,
- * reviewing, securing, documenting, shipping, and reasoning about data.
+ * Built-in skill catalog — a shelf of ready-to-use skills covering the tasks a
+ * coding agent is actually asked to do: building web apps, shaping APIs,
+ * testing, reviewing, securing, documenting, shipping, and reasoning about
+ * data. `catalogSize()` is the count; do not trust a number written here.
  *
  * Each entry is a compact, self-contained instruction. They are written to be
  * *loadable at any time*: the router (see ./skills) scores them against what the

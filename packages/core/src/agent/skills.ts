@@ -2,7 +2,7 @@
  * Skills — small, reusable instructions the agent can load on demand.
  *
  * Two kinds live side by side:
- *   - built-ins from ./skill-catalog (50 of them, covering real tasks)
+ *   - built-ins from ./skill-catalog (a large shelf, covering real tasks)
  *   - user skills from markdown on disk:
  *       ~/.imurun/skills/<id>.md            (global)
  *       <project>/.imurun/skills/<id>.md    (project — wins over global)

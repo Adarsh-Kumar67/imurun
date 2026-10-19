@@ -3,75 +3,102 @@
 **Your code. Your machine. Your model.**
 
 IMURUN is a local-first AI coding agent for the terminal. It installs, manages,
-and runs large language models entirely on your own hardware — CPU or GPU —
-with zero cloud dependency, zero telemetry, and zero cost. Bring an API key
-only if you want to: local models are the default.
+and runs large language models entirely on your own hardware — CPU or GPU — with
+no cloud dependency, no telemetry, and no separate runtime to configure. You run
+`imurun`, answer one question about whether to work locally or online, and start
+coding. Local models are the default, and everything IMURUN needs to run them
+ships with it.
+
+- Website: <https://imutechz.in>
+- Documentation: [`docs/`](docs/README.md)
+- Publisher: ImuTechz · Author: Shubham Mallick (<dev@imutechz.in>)
+- Version: **0.1.0** · License: MIT © 2026 ImuTechz
 
 ```
-┌──────────────────────┬──────────────────────────────────────────────┐
-│  CONTEXT             │ ❯ fix the login bug in auth.ts               │
-│  ████████░░░░  24%   │                                              │
-│  1.6k / 32k tok      │   I'll look at auth.ts first.                │
-│                      │   ⠿ read src/auth.ts · tracing the call path │
-│  AGENT               │   ███████░░░░░░░  46%                        │
-│  build               │   ✔ found the null deref on line 14          │
-│                      │                                              │
-│  MODEL               │ ❯ also add a test for it                     │
-│  qwen2.5-coder-7b    │                                              │
-│                      │   2 steps · 2235+140 tokens · 41s            │
-│  PERMISSIONS         │                                              │
-│  manual              │ ╭─ message ────────────────────── esc stops ╮ │
-│                      │ │ ❯ _                                       │ │
-│  DIRECTORY           │ ╰───────────────────────────────────────────╯ │
-│  …/ImuTechz/IMU CLI  │  / commands · shift+tab agent · approval …    │
-└──────────────────────┴──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┬──────────────────────┐
+│ ❯ fix the login bug in auth.ts               │  CONTEXT             │
+│                                              │  ████████░░░░  24%   │
+│   I'll look at auth.ts first.                │  1.6k / 32k tok      │
+│   ⠿ read src/auth.ts · tracing the call path │                      │
+│   ███████░░░░░░░░  46%                       │  AGENT               │
+│   ✔ found the null deref on line 14          │  build               │
+│                                              │                      │
+│ ❯ also add a test for it                     │  MODEL               │
+│                                              │  qwen2.5-coder-7b    │
+│   2 steps · 2235+140 tokens · 41s            │                      │
+│                                              │  PERMISSIONS         │
+│ ╭─ message ───────────────────── esc stops ╮ │  auto                │
+│ │ ❯ _                                      │ │  DIRECTORY           │
+│ ╰──────────────────── Ln 1, Col 1 ─────────╯ │  …/ImuTechz/IMU CLI  │
+│  / commands · shift+tab agent · approval …   │                      │
+└──────────────────────────────────────────────┴──────────────────────┘
 ```
+
+## Using local models, directly
+
+The point of IMURUN is to make a local model as easy to use as any hosted one,
+without giving up the machine it runs on.
+
+- **First run just works** — the first time you start IMURUN it asks one
+  question: run models on this machine, or online? Choose local and it probes your
+  hardware, picks the best-fitting coding model, installs the right inference
+  engine, and downloads the model — no flags, no manual engine choice, no config
+  file. Every step of the wizard can be stepped back with `Esc`.
+- **It shows you what fits** — before you commit, IMURUN scores your machine
+  (RAM, VRAM, CPU, disk) into a tier and recommends models that actually run well
+  on it, with an estimated speed and the storage each one needs. You can see
+  exactly how much space a download will take, and how much will be left, before
+  it starts.
+- **One keypress to install** — pick a model and IMURUN downloads it with a single
+  animated progress line, verifies the checksum, resumes an interrupted download
+  from where it stopped, and installs the engine for your platform first. If the
+  first engine build will not run, it silently falls back to one that does.
+- **The model is warm while you work, gone when you leave** — a managed background
+  daemon keeps the model in memory for near-instant replies. Close the terminal
+  and every byte of RAM is returned to your system. You never have a stray server
+  process.
+- **Everything you need is bundled** — the inference engine, the model catalog,
+  the index, and the memory store all run locally. There is no account, no API
+  key, and no network required for local use.
+- **Offline is a first-class mode** — search, recall, and the project index all
+  run in-process with no model, no network, and nothing loaded, so IMURUN works on
+  a plane or a locked-down machine the same way it does at home.
 
 ## Highlights
 
-- **Interactive terminal UI** — just run `imurun`. Chat with streaming replies,
-  inline tool cards, and permission prompts, switch models and agents on the fly,
-  and drive everything with slash commands.
-- **One-click local models** — IMURUN inspects your RAM, VRAM, CPU, and disk,
-  then shows a catalog of coding models that actually fit your machine. Pick
-  one, watch the live download progress, and start coding. Everything else is
-  automatic.
-- **Zero-setup first run** — on a brand-new machine, `imurun run "…"` installs the
-  correct inference engine and the best-fitting model for your hardware by
-  itself, with no prompts and no configuration. The engine build is verified and
-  silently falls back to a compatible one if the first choice will not run.
-- **Storage-aware installs** — before any download IMURUN shows exactly how much
-  space the model needs, how much is free, and how much will remain, and refuses
-  to start if the disk is too full. Every byte is accounted for.
-- **Easy cleanup** — list, remove, or wipe models and engine binaries with a single
-  command (`imurun models remove`, `imurun models clean`). Reclaimed space is
-  reported, and interrupted downloads are swept up too.
-- **Background runtime** — a managed inference daemon keeps your model warm in
-  memory for near-instant replies, and frees every byte of RAM the moment you
-  close the terminal.
-- **Persistent memory** — IMURUN remembers your credentials (encrypted with the
-  OS keychain), your coding style, and summaries of every past session, then
-  personalizes every new conversation with them.
-- **Offline self-updating RAG** — your codebase is indexed locally and kept fresh
-  as you work, so the agent can search everything you have written — no internet
-  required, no embeddings service, no API key.
-- **Full agent toolset** — read, write, edit, shell, glob, grep, code search, web
-  search, web fetching, sub-agents, and durable memory.
+- **Interactive terminal UI** — run `imurun`. Chat with streaming replies, inline
+  tool cards, and permission prompts; switch models and agents on the fly; and
+  drive everything with slash commands. See [The TUI](docs/the-tui.md).
+- **Storage-aware installs** — before any download IMURUN shows what the model
+  needs, what is free, and what will remain, and refuses to start if the disk is
+  too full. Every byte is accounted for. See
+  [Local models](docs/local-models.md).
+- **Easy cleanup** — list, remove (from the `/model` picker or the CLI), or wipe
+  models and engine binaries with one command. Reclaimed space is reported, and
+  interrupted downloads are swept up too.
+- **Persistent memory** — readable, editable notes that survive sessions, plus a
+  summary of each session and a per-project progress ledger, all stored locally as
+  plain files. See [Memory](docs/memory.md).
+- **Offline, self-updating RAG** — your codebase is indexed locally and kept fresh
+  as you work, so the agent can search everything you have written with no
+  internet, no embedding service, and no API key. See [RAG](docs/rag.md).
+- **Full agent toolset** — read, write, edit, shell, glob, grep, project-wide
+  search, web search, web fetching, sub-agents, and durable memory. See
+  [Tools](docs/tools.md).
 - **Built for small models** — every request is budgeted against the window the
   engine actually loaded. Older turns are folded into a session summary instead of
   being sent again, and a long answer is carried on rather than cut off. Big files
-  are written in pieces, the way a person would, so a small model never has to
-  produce one enormous tool call.
+  are written in pieces, the way a person would.
 - **Resumable work** — a per-project ledger records what was written and what is
-  still half-done, so an interrupted run picks up exactly where it stopped instead
-  of starting over.
-- **Self-adjusting skills & agents** — IMURUN ships 50+ task skills (from web
-  building to writing and data work) and picks the right one for a request
-  automatically; ask it to create a new skill or agent and it writes, registers,
-  and tests it for you.
-- **API mode** — prefer a cloud model? Add any OpenAI-compatible provider
-  (OpenAI, Anthropic, Google, OpenRouter, Groq, LM Studio, vLLM...) with one
-  command.
+  still half-done, so an interrupted run picks up exactly where it stopped.
+- **Self-adjusting skills and agents** — IMURUN ships **53** task skills (from
+  building a website to reviewing a diff) and picks the right one for a request
+  automatically. Ask it to create a new skill or agent and it writes the file for
+  you. See [Skills](docs/skills.md) and [Agents](docs/agents.md).
+- **Optional online providers** — prefer a cloud model? Add any OpenAI-compatible
+  provider (OpenAI, Anthropic, Google, OpenRouter, Groq, NVIDIA, DeepSeek,
+  Mistral, xAI, Together, or a custom endpoint) with one command. See
+  [Providers](docs/providers.md).
 
 ## Quickstart
 
@@ -94,16 +121,16 @@ imurun models
 imurun models install qwen2.5-coder-7b
 ```
 
-The model is loaded once and stays warm while you work. Close the terminal —
-or run `imurun runtime stop` — and the model is unloaded, with every byte of
-RAM returned to your system.
+The model is loaded once and stays warm while you work. Close the terminal — or
+run `imurun runtime stop` — and the model is unloaded, with every byte of RAM
+returned to your system. New here? Start with
+[Getting started](docs/getting-started.md).
 
 ## Interactive UI
 
-Run `imurun` (or `imurun chat`) for a full-screen-feel chat session with a
-scrolling transcript, streamed answers, and inline tool cards. Everything is
-also reachable from slash commands (press `Tab` to complete, `/help` for the
-list):
+Run `imurun` (or `imurun chat`) for a full-screen chat session with a scrolling
+transcript, streamed answers, and inline tool cards. Everything is also reachable
+from slash commands (press `Tab` to complete, `/help` for the list):
 
 ```
 /help                 list commands
@@ -125,7 +152,8 @@ list):
 
 Type a normal message to send it. Files written or commands run prompt for
 approval first — press `a` to always allow, `d` to always deny, or `/exit` to
-leave. `/permission auto` approves everything from then on.
+leave. `/permission auto` approves everything from then on. The full list is in
+[Slash commands](docs/slash-commands.md).
 
 ### Keyboard and mouse
 
@@ -153,8 +181,7 @@ reading off the screen. `PgDn` (or `Esc`) returns to the live end.
 
 Local models have a small window, so IMURUN treats it as a hard budget:
 
-- The engine is always started with an explicit `--ctx-size` — read from the
-  model's own GGUF metadata, not left to a default.
+- The engine is always started with an explicit context size.
 - Everything sent is measured against the window: the system prompt, recalled
   memory, tool arguments, and history. Tool arguments are compacted before they
   are replayed, so a file you wrote ten turns ago does not fill the window today.
@@ -200,7 +227,8 @@ You write clear, concise documentation and keep it in sync with the code.
 ```
 
 Interrupted or failed runs never leave a model in RAM: the runtime is owned by
-the supervisor and is torn down as soon as the last client leaves.
+the supervisor and is torn down as soon as the last client leaves. See
+[Agents](docs/agents.md).
 
 ### Skills
 
@@ -209,7 +237,7 @@ diff", "write a migration" — that IMURUN picks for a request automatically and
 feeds to the model as part of the prompt. They never clutter the chat; the one in
 use appears as a chip in the status line.
 
-IMURUN ships 50+ of them, and can pull a wider community pack:
+IMURUN ships **53** of them, and can pull a wider community pack:
 
 ```bash
 imurun skills                 # everything available, with what it's for
@@ -220,7 +248,8 @@ imurun skills sync            # clone a vetted pack from GitHub (license-checked
 
 Synced skills land in `~/.imurun/skills/` as plain markdown with an `origin` and
 `license` header, and never shadow a built-in one. Drop your own file in the same
-directory — or ask IMURUN to write it — and it is picked up immediately.
+directory — or ask IMURUN to write it — and it is picked up immediately. See
+[Skills](docs/skills.md).
 
 ### Managing storage
 
@@ -232,7 +261,31 @@ imurun models clean           # show what can be reclaimed
 imurun models clean --yes     # free it all (add --engine to drop engine builds)
 ```
 
-Add `--keep-files` to unregister a model while keeping the GGUF on disk.
+Add `--keep-files` to unregister a model while keeping the GGUF on disk. Model
+files, engines, and their space are described in
+[Local models](docs/local-models.md).
+
+### Permissions
+
+A fresh install runs in **auto** mode (nothing prompts). `/permission manual`
+makes IMURUN ask before writing files or running commands, and
+`/permission readonly` lets it look but never touch. Rules let you allow or deny
+specific commands and paths. See [Permissions](docs/permissions.md).
+
+## Documentation
+
+Full guides live in [`docs/`](docs/README.md):
+
+| Guide | Guide |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | [Providers](docs/providers.md) |
+| [Installation](docs/installation.md) | [Runtime](docs/runtime.md) |
+| [The TUI](docs/the-tui.md) | [Agents](docs/agents.md) |
+| [Slash commands](docs/slash-commands.md) | [Skills](docs/skills.md) |
+| [CLI reference](docs/cli-reference.md) | [Tools](docs/tools.md) |
+| [Configuration](docs/configuration.md) | [Memory](docs/memory.md) |
+| [Models](docs/models.md) | [RAG](docs/rag.md) |
+| [Local models](docs/local-models.md) | [Permissions](docs/permissions.md) |
 
 ## Status
 
@@ -244,7 +297,7 @@ IMURUN is under active construction. Milestones:
 - [x] M4 — Runtime daemon (local inference)
 - [x] M5 — Model manager (hardware detection, one-click install)
 - [x] M6 — Terminal UI (chat, streamed tools, slash commands, agents)
-- [x] M7 — Memory (vault, style learning, cross-session)
+- [x] M7 — Memory (durable notes, session summaries, progress ledger)
 - [x] M8 — Offline RAG
 - [x] M9 — Web tools
 - [x] M10 — Skills & agents (skill catalog, routing, sync, subagents)
@@ -274,7 +327,8 @@ bun run package -- --out=dist/release
 Everything is staged under `dist/package/` (gitignored); the script only writes
 files — it never touches the network or the registry. `bun run package` prints
 the exact `npm install -g` line for the staged build. The published version
-comes from `packages/cli/package.json`, so a release is a one-line bump.
+comes from `packages/cli/package.json`, so a release is a one-line bump. See
+[Installation](docs/installation.md).
 
 ## Repository layout
 
@@ -300,7 +354,6 @@ bun install        # install workspace dependencies
 bun run typecheck  # type check everything
 bun test           # run the test suite
 bun run build      # bundle every package
-bun run smoke      # M1 verification demo
 bun run dev        # launch the CLI in development mode
 bun run package    # stage the npm package + standalone binaries
 ```
@@ -319,4 +372,5 @@ bun run scripts/demo-run.ts          # an end-to-end agent turn with a stub mode
 
 ## License
 
-MIT © 2026 ImuTechz
+MIT © 2026 ImuTechz. IMURUN and its dependencies are free and open source, and
+the agent sends no telemetry.
