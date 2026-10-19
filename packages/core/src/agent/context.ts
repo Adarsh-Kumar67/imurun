@@ -191,7 +191,38 @@ export function toModelMessage(message: Message, options: { maxMessageChars?: nu
       return { role: "assistant", content: parts }
     }
     case "tool": {
-      const text = typeof message.content === "string" ? message.content : ""
+      // A tool result can carry images (a screenshot, a PNG read). Those become
+      // a content result; plain text stays a text result, which every
+      // OpenAI-compatible endpoint accepts.
+      if (typeof message.content !== "string") {
+        const value = message.content.map((part) =>
+          part.type === "image"
+            ? ({
+                type: "file" as const,
+                data: { type: "data" as const, data: part.data },
+                mediaType: part.mime,
+              })
+            : ({
+                type: "text" as const,
+                text: truncateForContext(part.type === "text" ? part.text : `[file: ${part.path}]`, max),
+              }),
+        )
+        // A single text part stays a plain text result — the shape every
+        // OpenAI-compatible endpoint has always accepted.
+        const only = value.length === 1 ? value[0] : undefined
+        const part: ToolResultPart = {
+          type: "tool-result",
+          toolCallId: message.toolCallId ?? "unknown",
+          toolName: message.metadata?.toolName ?? "unknown",
+          output:
+            only && only.type === "text"
+              ? { type: "text", value: only.text }
+              : { type: "content", value },
+        }
+        return { role: "tool", content: [part] }
+      }
+
+      const text = message.content
       const part: ToolResultPart = {
         type: "tool-result",
         toolCallId: message.toolCallId ?? "unknown",

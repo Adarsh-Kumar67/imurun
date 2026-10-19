@@ -20,6 +20,7 @@ import { progressTool } from "./progress"
 import { todoTool } from "./todo"
 import { planTool } from "./plan"
 import { codeSearchTool } from "./rag"
+import { screenshotTool } from "./screenshot"
 import { webFetchTool, webSearchTool } from "./web"
 
 export class ToolRegistry {
@@ -73,5 +74,6 @@ export class ToolRegistry {
       .register(planTool)
       .register(webSearchTool)
       .register(webFetchTool)
+      .register(screenshotTool)
   }
 }

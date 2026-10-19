@@ -38,6 +38,8 @@ Environment variables that affect behaviour:
 | `smallModel` | string | — | Small fast model for titles and summaries. |
 | `reasoningEffort` | `low` \| `medium` \| `high` \| `max` | — | Thinking budget sent to providers that accept one. |
 | `contextWindow` | integer > 0 | — | Override the context window (tokens) used for budgeting and shown in the panel. |
+| `vision` | boolean | — | Force whether the active model can see images. Unset means "decide from the model id". |
+| `visionModels` | string[] | `[]` | Extra model-id fragments treated as vision-capable, alongside the built-ins. |
 | `providers` | map | `{}` | Provider definitions keyed by id. |
 | `runtime` | object | see below | Local inference runtime settings. |
 | `memory` | object | see below | Memory behaviour. |
@@ -63,6 +65,32 @@ engine actually loaded, then any figure the provider publishes for the model
 window is genuinely unknown, so the panel says `window unknown` and prompts are
 budgeted conservatively rather than against an invented number. Set
 `contextWindow` when your endpoint does not advertise the model's real window.
+
+### `vision`
+
+Whether the model in use can look at an image, which decides what a
+[`screenshot`](tools.md#screenshot) or a `read` of a PNG is worth: pixels for a
+model that can see, an honest sentence for one that cannot.
+
+Left unset, IMURUN works it out from the model id — the known vision families
+(`qwen2.5-vl`, `llava`, `moondream`, `gemma-3`, `llama-4`, `gpt-4o`, `claude-3`,
+`gemini`, and the rest in `packages/core/src/agent/vision.ts`). Set it when that
+guess is wrong for your endpoint, which is the only case that matters:
+
+```jsonc
+{
+  // A self-hosted vision model with a name IMURUN does not recognise.
+  "vision": true,
+  // A text-only model whose name contains "vision".
+  "vision": false,
+  // Add your own families instead of pinning one model.
+  "visionModels": ["acme-eyes", "internvl"]
+}
+```
+
+A wrong guess is cheap either way — a wasted image, or a description where a
+picture would have been better — so the built-in list errs towards the known
+families rather than trying to be clever.
 
 ## `runtime`
 

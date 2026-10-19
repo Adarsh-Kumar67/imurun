@@ -153,7 +153,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     description: "Read-only planning agent — explores and proposes changes without editing files.",
     mode: "primary",
     prompt: role("plan", ""),
-    tools: ["read", "glob", "grep", "code_search", "web_search", "web_fetch", "memory", "progress", "todo", "plan", "task"],
+    tools: ["read", "glob", "grep", "code_search", "web_search", "web_fetch", "screenshot", "memory", "progress", "todo", "plan", "task"],
     disabledTools: ["write", "edit", "shell"],
     builtin: true,
     source: "builtin",

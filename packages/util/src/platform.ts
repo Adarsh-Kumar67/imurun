@@ -153,6 +153,15 @@ function findOnPath(name: string): string | undefined {
   return undefined
 }
 
+/**
+ * The absolute path of a command on PATH, or undefined when it is not
+ * installed. Used to pick the screen-capture tool a machine actually has
+ * instead of guessing from the OS alone.
+ */
+export function whichCommand(name: string): string | undefined {
+  return findOnPath(name)
+}
+
 function shellLabel(shell: string, fallback: string): string {
   return shell.split(/[\\/]/).pop() ?? fallback
 }

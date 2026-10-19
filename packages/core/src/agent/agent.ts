@@ -39,6 +39,7 @@ import { formatHit } from "../memory/search"
 import { learnFromMessage } from "../memory/learn"
 import { projectRagIndex, refreshRagIndex } from "../rag/config"
 import { formatRagHit } from "../rag/index"
+import { modelSeesImages } from "./vision"
 import { selectSkills, skillsToPromptSection } from "./skills"
 import type { SkillDefinition } from "./skills"
 
@@ -271,6 +272,10 @@ export class Agent {
     const resolved: ResolvedModel = providers.resolve(run.model ?? session.model ?? config.model)
     if (!session.model) sessions.update(session.id, { model: resolved.modelId })
 
+    // Whether this model has eyes decides what a screenshot or a PNG read is
+    // worth: pixels for a vision model, an honest sentence for anything else.
+    const vision = modelSeesImages(resolved.modelId, { force: config.vision, extra: config.visionModels })
+
     // ── Long-term memory: recall + compaction ──────────────────────────────
     // Oldest turns that fall outside the context budget are summarized into
     // `~/.imurun/memory/` and re-injected as a prompt section, so the model
@@ -402,6 +407,8 @@ export class Agent {
     if (toolNames.has("code_search")) capabilities.push("search the whole project by meaning over an offline index that keeps itself up to date")
     if (toolNames.has("web_search")) capabilities.push("search the internet and read web pages (these fail cleanly when offline)")
     if (memoryOn) capabilities.push("store and recall durable memory across sessions")
+    if (vision) capabilities.push("look at images and screenshots you give it")
+    if (toolNames.has("screenshot")) capabilities.push("see what is on this machine's screen by taking a screenshot")
     if (toolNames.has("shell")) {
       const shell = resolveShell()
       capabilities.push(
@@ -801,17 +808,24 @@ export class Agent {
                 error: "permission denied",
               }
             } else {
-              result = await this.executeTool(tool, args, run, call.name)
+              result = await this.executeTool(tool, args, run, call.name, vision)
             }
           } else {
-            result = await this.executeTool(tool, args, run, call.name)
+            result = await this.executeTool(tool, args, run, call.name, vision)
           }
         }
 
         sessions.addMessage({
           sessionId: session.id,
           role: "tool",
-          content: result.output,
+          // An image-producing tool (a screenshot, a PNG read) hands its picture
+          // back with the text, so a vision model sees it in the same step.
+          content: result.images?.length
+            ? [
+                { type: "text" as const, text: result.output },
+                ...result.images.map((image) => ({ type: "image" as const, mime: image.mime, data: image.data })),
+              ]
+            : result.output,
           toolCallId: call.id,
           metadata: { toolName: call.name },
         })
@@ -875,6 +889,7 @@ export class Agent {
     args: Record<string, unknown>,
     run: RunOptions,
     name: string,
+    vision = false,
   ): Promise<ToolResult> {
     const ctx: ToolContext = {
       workingDir: run.workingDir,
@@ -883,6 +898,7 @@ export class Agent {
       signal: run.signal,
       log: this.log.child(name),
       config: this.options.config,
+      vision,
       ledger: ledgerFor(run.workingDir),
     }
     try {

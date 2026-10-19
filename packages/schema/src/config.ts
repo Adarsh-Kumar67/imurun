@@ -141,6 +141,14 @@ export const ImurunConfig = z.object({
    * endpoint, so IMURUN neither under- nor over-fills it.
    */
   contextWindow: z.number().int().positive().optional(),
+  /**
+   * Whether the active model can see images. Unset means "work it out from the
+   * model id"; set it for an endpoint serving a vision model IMURUN does not
+   * recognise (`true`) or a text-only model with a misleading name (`false`).
+   */
+  vision: z.boolean().optional(),
+  /** Extra model-id fragments to treat as vision-capable, alongside the built-ins. */
+  visionModels: z.array(z.string()).default([]),
   /** Provider definitions, keyed by provider id. */
   providers: z.record(z.string(), ProviderConfig).default({}),
   runtime: RuntimeConfig.prefault({}),

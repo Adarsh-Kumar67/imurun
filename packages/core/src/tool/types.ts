@@ -20,6 +20,12 @@ export interface ToolContext {
    */
   config?: ImurunConfig
   /**
+   * True when the active model can see images. Tools that produce pictures
+   * (`read` on a PNG, `screenshot`) attach them only when this is set, and
+   * describe them in words otherwise.
+   */
+  vision?: boolean
+  /**
    * Key/value store of work in flight for this project. Tools that change the
    * project record what they did, so a later run can see where it got to.
    */

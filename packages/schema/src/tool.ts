@@ -25,12 +25,28 @@ export type ToolName = z.infer<typeof ToolName>
 export const ToolParameters = z.record(z.string(), z.unknown())
 export type ToolParameters = z.infer<typeof ToolParameters>
 
+/**
+ * An image handed back to the model alongside the text: base64 bytes, never a
+ * URL, because a local model has to be able to see it with no network at all.
+ */
+export const ToolImage = z.object({
+  mime: z.string(),
+  /** Base64-encoded image bytes. */
+  data: z.string(),
+})
+export type ToolImage = z.infer<typeof ToolImage>
+
 export const ToolResult = z.object({
   ok: z.boolean(),
   /** Text result fed back to the model. */
   output: z.string().default(""),
   /** Structured data for programmatic consumers. */
   data: z.unknown().optional(),
+  /**
+   * Images for a model that can see them. Only set when the active model is
+   * known to be vision-capable; otherwise a text description is all that is sent.
+   */
+  images: z.array(ToolImage).optional(),
   /** Short title shown in the UI, e.g. "read auth.ts". */
   title: z.string().optional(),
   error: z.string().optional(),

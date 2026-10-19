@@ -88,8 +88,8 @@ without giving up the machine it runs on.
   in front of the model automatically, and the panel names the files they came
   from. See [RAG](docs/rag.md).
 - **Full agent toolset** — read, write, edit, shell, glob, grep, project-wide
-  search, web search, web fetching, sub-agents, and durable memory. See
-  [Tools](docs/tools.md).
+  search, web search, web fetching, screenshots, sub-agents, and durable memory.
+  See [Tools](docs/tools.md).
 - **Built for small models** — every request is budgeted against the window the
   engine actually loaded. Older turns are folded into a session summary instead of
   being sent again, and a long answer is carried on rather than cut off. Big files

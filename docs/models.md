@@ -40,9 +40,11 @@ GGUF container overhead, which lands within roughly 5% of the published files.
 | `qwen2.5-vl-7b` | Qwen2.5 VL 7B | 7B | 32k | 55 | yes | yes | apache-2.0 |
 
 "Tools" means the model supports tool calling, which is what lets it use
-IMURUN's tools instead of only chatting. "Vision" means it can read images;
+IMURUN's tools instead of only chatting. "Vision" means it can read images:
 `qwen2.5-vl-7b` is the catalog entry for that and ships with a vision projector
-file. The coding and reasoning columns are benchmark scores from the catalog.
+file, and installing it is what makes the [`screenshot`](tools.md#screenshot) tool
+and a `read` of a PNG actually useful. The coding and reasoning columns are
+benchmark scores from the catalog.
 
 Quantizations available per model vary. Most offer `Q4_K_M`, `Q5_K_M`, and
 `Q3_K_M`; a few (Qwen3, Gemma 3 QAT, Qwen2.5 VL) offer a different set. Which

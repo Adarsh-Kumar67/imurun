@@ -21,7 +21,7 @@ when one is missing a constraint.
 | Agent | Mode | Prompt and tools |
 | --- | --- | --- |
 | `build` | primary | The default. Reads, writes, edits, and runs commands. Has every tool. |
-| `plan` | primary | Read-only architect. Has read, glob, grep, code_search, web_search, web_fetch, memory, progress, todo, plan, and task — and has write, edit, and shell disabled. |
+| `plan` | primary | Read-only architect. Has read, glob, grep, code_search, web_search, web_fetch, screenshot, memory, progress, todo, plan, and task — and has write, edit, and shell disabled. |
 | `general` | primary | General-purpose engineering agent with every tool. |
 | `explore` | subagent | Fast, read-only scout. Has read, glob, grep, code_search, web_search, and web_fetch. Used by the `task` tool. |
 

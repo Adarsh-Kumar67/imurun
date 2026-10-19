@@ -1,19 +1,19 @@
 # Tools
 
 **What this covers:** every tool the model can call — its description, its
-arguments, and the limits IMURUN enforces on it. It documents the 13 tools in the
+arguments, and the limits IMURUN enforces on it. It documents the 14 tools in the
 base registry plus the `task` tool, which the interface adds. Which tools an agent
 can see is set by the agent (see [Agents](agents.md)).
 
 ## The tool set
 
-The base registry registers 13 tools; the interactive UI registers a 14th,
+The base registry registers 14 tools; the interactive UI registers a 15th,
 `task`, which needs the subagent runner. The default agent has all of them; the
 `plan` agent has the read-only subset.
 
 | Tool | Purpose | Needs approval |
 | --- | --- | --- |
-| `read` | Read a text file with line numbers. | No |
+| `read` | Read a text file with line numbers, or an image. | No |
 | `write` | Create or overwrite a file (small pieces). | Yes |
 | `edit` | Replace an exact string in a file. | Yes |
 | `shell` | Run a command through the platform shell. | Yes |
@@ -26,6 +26,7 @@ The base registry registers 13 tools; the interactive UI registers a 14th,
 | `plan` | Write `.imurun/PLAN.md`. | No |
 | `web_search` | Search the internet. | No |
 | `web_fetch` | Download and read a web page. | No |
+| `screenshot` | Capture the screen so the model can look at it. | No |
 | `task` | Delegate to a subagent. | No |
 
 "Needs approval" reflects the permission lists: the no-approval tools are
@@ -47,6 +48,20 @@ Limits: a file larger than **512 KB** is refused with a message suggesting
 `grep` or `shell`; a binary file (one containing a NUL byte in its first 8 KB) is
 reported but not decoded; and lines longer than **2000 characters** are clipped.
 A path that is a directory is rejected.
+
+An **image** (PNG, JPEG, GIF, WebP, or BMP — by extension, or by its header
+bytes when the name has no suffix) is read as a picture, not as text. Whether the
+model gets the picture depends on whether it can see one:
+
+| Model | What `read` returns |
+| --- | --- |
+| Vision-capable | The image itself, alongside a line naming its size and format (e.g. `1024×768 PNG, 2.0 KB`). |
+| Text-only | The same description plus a plain statement that this model cannot view images, so the agent reports that honestly instead of inventing a description. |
+
+Whether a model is treated as vision-capable is decided from its id (the
+known vision families), and can be overridden with
+[`vision`](configuration.md#vision) in config. Images larger than **12 MB** are
+refused.
 
 ## write
 
@@ -287,6 +302,31 @@ offline through `code_search` — one request, then no network. It is off by def
 because it puts files in your project.
 
 See [Configuration](configuration.md#web).
+
+## screenshot
+
+See what is on the screen right now. Use it when the request points at something
+visible — an error dialog, a window that looks wrong, a chart, a game — rather
+than asking the user to describe it in words.
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `path` | string | Where to save the PNG. Defaults to a timestamped file in the system temp directory. |
+| `open` | boolean | Also open the capture in the system viewer, so the user sees what you looked at. |
+
+The capture uses whatever the platform already has:
+
+| Platform | Capture tool |
+| --- | --- |
+| Windows | PowerShell and .NET's `CopyFromScreen` (always present). |
+| macOS | `screencapture -x` (ships with the OS). |
+| Linux | The first of `grim`, `scrot`, `gnome-screenshot`, `spectacle`, or ImageMagick's `import` that is installed. |
+
+As with `read` on an image, a **vision** model is shown the picture, and a
+text-only model is given the path and told plainly that it cannot see the file —
+so it asks rather than guesses. If the machine has no capture tool at all
+(a headless server, a bare container), the tool says so by name instead of
+failing silently.
 
 ## task
 
