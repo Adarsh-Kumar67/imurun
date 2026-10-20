@@ -75,6 +75,29 @@ function npmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm"
 }
 
+/**
+ * Quotes an argument for the shell.
+ *
+ * npm on Windows is a batch file, so it has to be run through a shell — and a
+ * path with a space in it has to be quoted, or the shell cuts it in half.
+ */
+function quoteArg(arg: string): string {
+  if (process.platform !== "win32") return arg
+  if (!/[\s"&|<>^]/.test(arg)) return arg
+  return `"${arg.replace(/"/g, '\\"')}"`
+}
+
+/** Runs npm with the publishing credential in the environment. */
+function runNpm(args: string[], env: Record<string, string>): number {
+  const line = [npmCommand(), ...args].map(quoteArg).join(" ")
+  const result = spawnSync(line, {
+    stdio: "inherit",
+    shell: process.platform === "win32",
+    env: { ...process.env, ...env },
+  })
+  return result.status ?? 1
+}
+
 function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return {
     Accept: "application/vnd.github+json",
@@ -271,12 +294,11 @@ if (npmToken) {
   for (const dir of platformDirs) {
     const name = JSON.parse(await readFile(join(dir, "package.json"), "utf8")).name as string
     console.log(`\n▶ publishing ${name} to npm`)
-    const published = spawnSync(npmCommand(), ["publish", dir, "--access", "public"], {
-      stdio: "inherit",
-      shell: false,
-      env: { ...process.env, NPM_TOKEN: npmToken, NPM_CONFIG_USERCONFIG: npmConfig },
+    const status = runNpm(["publish", dir, "--access", "public"], {
+      NPM_TOKEN: npmToken,
+      NPM_CONFIG_USERCONFIG: npmConfig,
     })
-    if (published.status !== 0) {
+    if (status !== 0) {
       console.error(`  ${name} was not published — the install will fall back to Bun for this platform.`)
     } else {
       console.log(`  done`)
