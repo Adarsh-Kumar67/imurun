@@ -11,7 +11,7 @@
  *   2. Standalone executables (`imurun-<os>-<arch>[.exe]`) for machines that
  *      have no Bun at all — `bun build --compile` embeds the runtime, so the
  *      file is the whole program. These are published as platform packages
- *      (`@imurun/<os>-<arch>`) that the main package pulls in through
+ *      (`imurun-<os>-<arch>`) that the main package pulls in through
  *      `optionalDependencies`; the launcher prefers the native binary and falls
  *      back to Bun when one is not available.
  *
@@ -107,7 +107,7 @@ const ext = process.platform === "win32" ? ".exe" : ""
 
 function nativeBinary() {
   try {
-    const pkg = require.resolve(\`@imurun/\${osName}-\${process.arch}/package.json\`)
+    const pkg = require.resolve(\`imurun-\${osName}-\${process.arch}/package.json\`)
     const candidate = join(dirname(pkg), "bin", \`imurun\${ext}\`)
     if (existsSync(candidate)) return candidate
   } catch {
@@ -340,7 +340,10 @@ const optionalDependencies: Record<string, string> = {}
 
 for (const binary of binaries) {
   const { platform, arch, nodeOs } = splitTarget(binary.target)
-  const name = `@imurun/${platform}-${arch}`
+  // The platform packages are published unscoped, the way every project that
+  // ships prebuilt binaries does it. A scope would need an organisation on
+  // the registry, and a personal account cannot create one.
+  const name = `imurun-${platform}-${arch}`
   const dir = join(npmDir, `imurun-${platform}-${arch}`)
   await mkdir(join(dir, "bin"), { recursive: true })
   await cp(binary.file, join(dir, "bin", `imurun${platform === "windows" ? ".exe" : ""}`))

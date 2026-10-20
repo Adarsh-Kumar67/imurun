@@ -50,7 +50,7 @@ function nativeBinary(): string | undefined {
   const osName = process.platform === "win32" ? "windows" : process.platform
   const ext = process.platform === "win32" ? ".exe" : ""
   try {
-    const pkg = require.resolve(`@imurun/${osName}-${process.arch}/package.json`)
+    const pkg = require.resolve(`imurun-${osName}-${process.arch}/package.json`)
     const candidate = join(pkg.replace(/[\\/]package\.json$/, ""), "bin", `imurun${ext}`)
     if (existsSync(candidate)) return candidate
   } catch {

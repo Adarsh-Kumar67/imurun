@@ -327,7 +327,7 @@ heading("the standalone executables are published alongside the package")
       optionalDependencies?: Record<string, string>
     }
     const missing = platforms.filter(
-      (name) => !Object.keys(main.optionalDependencies ?? {}).includes(`@imurun/${name.replace("imurun-", "")}`),
+      (name) => !Object.keys(main.optionalDependencies ?? {}).includes(name),
     )
     if (missing.length > 0) {
       bad(`the main package does not depend on: ${missing.join(", ")}`)
