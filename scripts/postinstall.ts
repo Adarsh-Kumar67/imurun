@@ -59,45 +59,82 @@ function nativeBinary(): string | undefined {
   return undefined
 }
 
+/**
+ * Finds Bun.
+ *
+ * Bun installed from bun.sh puts `bun.exe` on PATH. Bun installed with npm
+ * does not: it puts a `bun.cmd` shim in the npm bin directory and the real
+ * executable inside the package. A hook that only looks for "bun" concludes
+ * the machine has no Bun when it has one — which is the bug this avoids.
+ */
+function findBun(): Array<{ command: string; shell: boolean }> {
+  const candidates: Array<{ command: string; shell: boolean }> = []
+  if (process.platform === "win32") {
+    // The executable inside the npm package, next to the launcher.
+    const npmBun = join(here, "..", "..", "bun", "bin", "bun.exe")
+    if (existsSync(npmBun)) candidates.push({ command: npmBun, shell: false })
+  }
+  candidates.push({ command: "bun", shell: false })
+  if (process.platform === "win32") {
+    candidates.push({ command: "bun.cmd", shell: true })
+  }
+  return candidates
+}
+
 if (process.env.IMURUN_SKIP_SETUP === "1") {
   say("")
   say("  IMURUN is installed. Run `imurun setup` when you want the engine and a model.")
   say("")
-  process.exit(0)
-}
-
-say("")
-say("  IMURUN is installed.")
-say("  Setting this machine up — the engine and a model that fits it.")
-say("  This downloads a few gigabytes. To skip it, run:")
-say("    IMURUN_SKIP_SETUP=1 npm install -g imurun")
-say("")
-
-const binary = nativeBinary()
-const program = programPath()
-
-// The standalone binary, else Bun with the bundle, else nothing to run.
-let child: ReturnType<typeof spawnSync> | undefined
-if (binary) {
-  child = spawnSync(binary, ["setup", "--quiet"], { stdio: quiet ? "ignore" : "inherit" })
-} else if (program) {
-  child = spawnSync("bun", [program, "setup", "--quiet"], { stdio: quiet ? "ignore" : "inherit" })
-}
-
-if (!child || child.error || child.status !== 0) {
-  // A failed setup must not undo the install.
+} else {
   say("")
-  say("  IMURUN is installed, but the automatic setup did not finish.")
-  if (child?.error && /bun/i.test(child.error.message)) {
-    say("  Bun does not seem to be on your PATH. Install it from https://bun.sh, then run `imurun setup`.")
-  } else {
-    say("  Run `imurun setup` to try again, or `imurun models list --all` to choose a model yourself.")
+  say("  IMURUN is installed.")
+  say("  Setting this machine up — the engine and a model that fits it.")
+  say("  This downloads a few gigabytes. To skip it, run:")
+  say("    IMURUN_SKIP_SETUP=1 npm install -g imurun")
+  say("")
+
+  const binary = nativeBinary()
+  const program = programPath()
+
+  // The standalone binary, else Bun with the bundle, else nothing to run.
+  let child: ReturnType<typeof spawnSync> | undefined
+  let ranWith = ""
+  if (binary) {
+    ranWith = "the standalone executable"
+    child = spawnSync(binary, ["setup", "--quiet"], { stdio: quiet ? "ignore" : "inherit" })
+  } else if (program) {
+    for (const candidate of findBun()) {
+      ranWith = "Bun"
+      child = spawnSync(candidate.command, [program, "setup", "--quiet"], {
+        stdio: quiet ? "ignore" : "inherit",
+        shell: candidate.shell,
+      })
+      // A shell reports "not found" as a status, not as an error.
+      if (!child.error && (child.status === 127 || child.status === 9009)) {
+        child = { ...child, error: new Error(`${candidate.command} was not found`) } as typeof child
+        continue
+      }
+      if (!child.error) break
+    }
   }
-  say("")
-  process.exit(0)
+
+  if (!child || child.error || child.status !== 0) {
+    // A failed setup must not undo the install.
+    say("")
+    say("  IMURUN is installed, but the automatic setup did not finish.")
+    if (!ranWith) {
+      say("  Bun does not seem to be on your PATH. Install it from https://bun.sh, then run `imurun setup`.")
+    } else {
+      say("  Run `imurun setup` to try again, or `imurun models list --all` to choose a model yourself.")
+    }
+    say("")
+  } else {
+    say("")
+    say("  Ready. Run `imurun` to start.")
+    say("")
+  }
 }
 
-say("")
-say("  Ready. Run `imurun` to start.")
-say("")
-process.exit(0)
+// The exit code is set rather than the process ended outright: exiting here
+// would throw away the message that was just written.
+process.exitCode = 0

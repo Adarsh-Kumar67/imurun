@@ -1857,10 +1857,18 @@ export class TuiApp {
     if (this.preloading || this.closed) return
     this.preloading = true
     try {
-      // A fresh machine (or a model that has since gone away) gets the wizard
-      // instead of an error: everything needed is decided in one short flow.
+      // A fresh machine (or a model that has since gone away) is set up
+      // automatically: the hardware says which model fits, and it is
+      // installed without a questionnaire. `/setup` is there for anyone who
+      // wants to decide for themselves, and `/provider` for an online model.
       if (await this.needsSetup()) {
-        await this.setupWizard()
+        const done = await this.autoInstall()
+        if (done) {
+          this.pushNotice("this machine is ready \u00b7 /setup to change it", "ok")
+        }
+        await this.ensureModel()
+        void this.refreshSidebar()
+        this.renderHeader()
         return
       }
       const ready = await this.ensureModel()
@@ -2014,6 +2022,16 @@ export class TuiApp {
     this.scheduleRender()
   }
 
+  /**
+   * Sets this machine up without asking anything.
+   *
+   * The model that fits the machine is chosen, the engine is installed and the
+   * weights are downloaded. Nothing is asked, because there is nothing to
+   * ask: the hardware knows the answer.
+   *
+   * The manual paths are still there — `/setup` for the wizard, `/model` to
+   * choose a different model, `/provider` to use an online one.
+   */
   private async autoInstall(): Promise<boolean> {
     const hardware = await loadHardware()
     const fitting = fittingModels(hardware, CATALOG)
@@ -2027,14 +2045,10 @@ export class TuiApp {
     const size = variant ? ` \u00b7 ~${variant.sizeGB.toFixed(1)} GB` : ""
 
     this.pushNotice(
-      `recommended for this machine: ${model.displayName} (${model.id} \u00b7 ${recommendedQuant}${size}) \u2014 ${reason}`,
+      `setting up this machine: ${model.displayName} (${model.id} \u00b7 ${recommendedQuant}${size}) \u2014 ${reason}`,
       "ok",
     )
-    const answer = (await this.confirm("set up this machine automatically?", "[Y/n]")).toLowerCase()
-    if (answer === "n") {
-      this.print(theme.dim("  skipped \u2014 /model to choose one"))
-      return false
-    }
+    this.pushNotice("this downloads a few gigabytes \u00b7 esc stops it", "info")
     return this.install(model.id, recommendedQuant)
   }
 

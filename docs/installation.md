@@ -61,6 +61,22 @@ To install the program alone and set the machine up later:
 IMURUN_SKIP_SETUP=1 npm install -g imurun
 ```
 
+**If npm does not run the setup.** npm 11 only runs a package's install
+scripts when that package has been allowed to, and it says so during the
+install. Two ways forward, and the second is the one to prefer:
+
+```bash
+# 1. allow this one package's script, and install again
+npm install -g --allow-scripts=imurun imurun
+
+# 2. or let the first run do it: the program sets the machine up the first
+#    time it starts, with no questions
+imurun
+```
+
+The first run always makes the machine ready, whether the install script ran
+or not. `imurun setup` does the same thing by hand.
+
 Verify:
 
 ```bash

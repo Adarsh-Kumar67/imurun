@@ -142,7 +142,9 @@ if (!skipPython) {
 
 heading("build the npm package")
 {
-  const result = run(bun, ["run", "package"])
+  // The platform packages are built too, so the check can prove that the
+  // install brings the standalone executable with it and never needs Bun.
+  const result = run(bun, ["run", "package", "--", "--binaries"])
   if (result.status === 0) ok("the npm package is staged")
   else bad("the npm package could not be built", result.output)
 }
@@ -305,7 +307,37 @@ if (!quick) {
   }
 }
 
-// ── 7. what the release promises ────────────────────────────────────────────
+// ── 7. the platform packages, so the install never needs Bun ─────────────
+
+heading("the standalone executables are published alongside the package")
+{
+  const npmRoot = join(root, "dist", "package", "npm")
+  const platforms = existsSync(npmRoot)
+    ? readdirSync(npmRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("imurun-"))
+        .map((entry) => entry.name)
+    : []
+  if (platforms.length === 0) {
+    bad("no platform package was built — the install would need Bun")
+  } else {
+    ok(`${platforms.length} platform package(s) built: ${platforms.join(", ")}`)
+    // The main package must actually depend on them, or npm will not pull
+    // them in and the install falls back to Bun.
+    const main = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as {
+      optionalDependencies?: Record<string, string>
+    }
+    const missing = platforms.filter(
+      (name) => !Object.keys(main.optionalDependencies ?? {}).includes(`@imurun/${name.replace("imurun-", "")}`),
+    )
+    if (missing.length > 0) {
+      bad(`the main package does not depend on: ${missing.join(", ")}`)
+    } else {
+      ok("the main package pulls the executables in as optional dependencies")
+    }
+  }
+}
+
+// ── 8. what the release promises ────────────────────────────────────────────
 
 heading("the package contains what the docs promise")
 {

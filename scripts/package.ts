@@ -92,7 +92,7 @@ async function readVersion(): Promise<string> {
  */
 const LAUNCHER = `#!/usr/bin/env bun
 // IMURUN launcher — prefers the prebuilt executable for this platform and falls
-// back to the bundled JavaScript, which needs Bun on PATH.
+// back to the bundled JavaScript, which needs Bun.
 import { spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
@@ -116,6 +116,65 @@ function nativeBinary() {
   return undefined
 }
 
+/**
+ * Finds an executable on PATH, the way the shell would.
+ *
+ * The shell is not used for this on purpose: a shell reports a missing
+ * command as an ordinary non-zero status, so "not found" and "the program
+ * failed" look the same. Resolving the path here tells the two apart.
+ */
+function findOnPath(command) {
+  const dirs = (process.env.PATH || "").split(process.platform === "win32" ? ";" : ":").filter(Boolean)
+  const extensions =
+    process.platform === "win32"
+      ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      : [""]
+  for (const dir of dirs) {
+    // The name as it is: "bun.cmd" is already a complete file name.
+    if (existsSync(join(dir, command))) return join(dir, command)
+    for (const extension of extensions) {
+      const candidate = join(dir, command + extension)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return undefined
+}
+
+/**
+ * Finds Bun.
+ *
+ * This is where the "bun is not found" trouble comes from, so it is worth
+ * being thorough. Bun installed from bun.sh puts \`bun.exe\` on PATH. Bun
+ * installed with npm does *not*: it puts a \`bun.cmd\` shim in the npm bin
+ * directory and the real executable inside the package. A launcher that only
+ * looks for "bun" finds neither, and reports a machine with no Bun at all
+ * when it has one.
+ */
+function findBun() {
+  const candidates = []
+  // The executable itself, wherever it is: a real Bun install, or npm's.
+  const onPath = findOnPath(process.platform === "win32" ? "bun.exe" : "bun")
+  if (onPath) candidates.push({ command: onPath, shell: false })
+  // The executable inside the npm package, next to the launcher.
+  const npmBun = join(here, "..", "..", "bun", "bin", "bun.exe")
+  if (existsSync(npmBun)) candidates.push({ command: npmBun, shell: false })
+  // npm's shim. It points at the executable inside the package, so the real
+  // one is found through it rather than run through a shell. The layout
+  // differs: a global install keeps the package under the prefix's own
+  // node_modules, a local one hoists it beside the .bin directory.
+  const shim = findOnPath("bun.cmd")
+  if (shim) {
+    const layouts = [
+      join(dirname(shim), "node_modules", "bun", "bin", "bun.exe"),
+      join(dirname(shim), "..", "bun", "bin", "bun.exe"),
+    ]
+    const beside = layouts.find((candidate) => existsSync(candidate))
+    if (beside) candidates.push({ command: beside, shell: false })
+    else candidates.push({ command: shim, shell: true })
+  }
+  return candidates
+}
+
 const args = process.argv.slice(2)
 const binary = nativeBinary()
 if (binary) {
@@ -131,24 +190,40 @@ if (binary) {
 // bundle needs Bun. Say so plainly rather than letting the operating system
 // print "spawnSync bun ENOENT".
 const bundle = join(here, "..", "dist", "imurun.js")
-const child = spawnSync("bun", [bundle, ...args], { stdio: "inherit" })
-if (child.error) {
-  const missing = child.error.code === "ENOENT"
-  console.error("")
-  console.error("  IMURUN needs Bun (1.2 or newer) to run the JavaScript build.")
-  console.error("")
-  if (missing) {
-    console.error("  Install Bun, then run imurun again:")
-    console.error("    Windows:  powershell -c \\"irm bun.sh/install.ps1 | iex\\"")
-    console.error("    macOS:    curl -fsSL https://bun.sh/install | bash")
-    console.error("    Linux:    curl -fsSL https://bun.sh/install | bash")
+let lastError = null
+for (const candidate of findBun()) {
+  // A shell candidate's own "not recognized" message is noise: the launcher
+  // says something better, once, at the end.
+  const child = spawnSync(candidate.command, [bundle, ...args], {
+    stdio: candidate.shell ? ["inherit", "inherit", "ignore"] : "inherit",
+    shell: candidate.shell,
+  })
+  if (!child.error) {
+    // A shell reports "not found" as a status of 127 or 9009, not as an
+    // error, so a candidate that is not there has to be recognised here —
+    // otherwise the launcher would exit with that status and say nothing.
+    if (child.status === 127 || child.status === 9009) {
+      lastError = { code: "ENOENT", message: \`\${candidate.command} was not found\` }
+      continue
+    }
+    process.exit(child.status ?? 0)
   }
-  console.error("  Or download a standalone build that needs nothing else:")
-  console.error("    https://github.com/ImuTechz/imurun/releases/latest")
-  console.error("")
-  process.exit(1)
+  lastError = child.error
 }
-process.exit(child.status ?? 0)
+
+console.error("")
+console.error("  IMURUN needs Bun (1.2 or newer) to run the JavaScript build.")
+console.error("")
+console.error("  Install Bun, then run imurun again:")
+console.error("    Windows:  powershell -c \\"irm bun.sh/install.ps1 | iex\\"")
+console.error("    macOS:    curl -fsSL https://bun.sh/install | bash")
+console.error("    Linux:    curl -fsSL https://bun.sh/install | bash")
+console.error("  Or download a standalone build that needs nothing else:")
+console.error("    https://github.com/ImuTechz/imurun/releases/latest")
+console.error("")
+// The exit code is set rather than the process ended outright: exiting here
+// would throw away the message that was just written.
+process.exitCode = 1
 `
 
 const README = `# IMURUN

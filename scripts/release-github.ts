@@ -21,7 +21,7 @@
  *   bun run release -- --repo=shubham001312/imurun --targets=bun-windows-x64,bun-linux-x64
  *   bun run release -- --dry-run     # stage + pack, print the plan, touch nothing
  */
-import { copyFile, cp, mkdir, readdir, rm, stat } from "node:fs/promises"
+import { copyFile, cp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -42,6 +42,17 @@ const targets = flag("targets") ?? "bun-windows-x64,bun-linux-x64,bun-linux-arm6
 const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
 const api = "https://api.github.com"
 
+/**
+ * The npm credential, when there is one.
+ *
+ * The platform packages are published to npm as well as the main one, so a
+ * plain install brings the right standalone executable along and never needs
+ * Bun. The token is read from the environment and used through a temporary
+ * npm configuration that references it — the secret itself is never written
+ * to a file.
+ */
+const npmToken = process.env.NPM_TOKEN?.trim() || process.env.NPM_CONFIG_TOKEN?.trim()
+
 const manifest = await Bun.file(join(root, "packages/cli/package.json")).json()
 const version: string = manifest.version
 
@@ -49,6 +60,7 @@ const outDir = resolve(root, "dist/package")
 const releaseDir = resolve(root, "dist/release")
 const npmDir = join(outDir, "npm/imurun")
 const binariesDir = join(outDir, "binaries")
+const npmConfig = join(releaseDir, ".npmrc")
 
 function run(command: string, args: string[], options: { cwd?: string } = {}): void {  // No shell: paths with spaces ("IMU CLI") must reach the child as one argv
   // entry, and every command here exists as an executable (.cmd on Windows).
@@ -58,7 +70,10 @@ function run(command: string, args: string[], options: { cwd?: string } = {}): v
   }
 }
 
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+/** The npm executable for this platform. */
+function npmCommand(): string {
+  return process.platform === "win32" ? "npm.cmd" : "npm"
+}
 
 function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return {
@@ -231,3 +246,41 @@ console.log(`    npm install -g imurun`)
 console.log("  or straight from this release:")
 console.log(`    npm install -g https://github.com/${repo}/releases/download/v${version}/imurun-npm.tgz`)
 console.log("  or download a standalone binary from the release page — it needs nothing else.")
+
+// ── the platform packages on npm ────────────────────────────────────────────
+//
+// The main package lists the standalone executables as optional dependencies,
+// so a plain `npm install -g imurun` brings the right one along and the
+// program never needs Bun at all. They have to be published too, or the
+// optional dependency resolves to nothing and the install falls back to the
+// JavaScript bundle.
+if (npmToken) {
+  const npmDir = join(outDir, "npm")
+  const platformDirs = existsSync(npmDir)
+    ? (await readdir(npmDir, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("imurun-"))
+        .map((entry) => join(npmDir, entry.name))
+    : []
+  if (platformDirs.length === 0) {
+    console.log("\n  (no platform packages were built — the install will need Bun)")
+  }
+  // The configuration refers to the environment variable, so the secret
+  // itself is never written to disk.
+  await mkdir(releaseDir, { recursive: true })
+  await Bun.write(npmConfig, "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n@imurun:registry=https://registry.npmjs.org/\n")
+  for (const dir of platformDirs) {
+    const name = JSON.parse(await readFile(join(dir, "package.json"), "utf8")).name as string
+    console.log(`\n▶ publishing ${name} to npm`)
+    const published = spawnSync(npmCommand(), ["publish", dir, "--access", "public"], {
+      stdio: "inherit",
+      shell: false,
+      env: { ...process.env, NPM_TOKEN: npmToken, NPM_CONFIG_USERCONFIG: npmConfig },
+    })
+    if (published.status !== 0) {
+      console.error(`  ${name} was not published — the install will fall back to Bun for this platform.`)
+    } else {
+      console.log(`  done`)
+    }
+  }
+  await rm(npmConfig, { force: true })
+}
