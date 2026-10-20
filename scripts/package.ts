@@ -367,7 +367,11 @@ for (const binary of binaries) {
       2,
     ) + "\n",
   )
-  optionalDependencies[name] = version
+  // A range, not an exact version: the registry can take minutes to finish a
+  // hundred-megabyte tarball, and a range means an install that happens
+  // before the platform package has landed still resolves to the one that
+  // has.
+  optionalDependencies[name] = `^${version}`
 }
 
 await mkdir(join(mainPackageDir, "dist"), { recursive: true })

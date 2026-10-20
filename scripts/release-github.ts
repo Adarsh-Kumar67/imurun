@@ -98,6 +98,30 @@ function runNpm(args: string[], env: Record<string, string>): number {
   return result.status ?? 1
 }
 
+/**
+ * Waits for a package to appear on the registry.
+ *
+ * A hundred-megabyte tarball takes the registry a few minutes to finish, and
+ * the version is not really there until it has. The main package is published
+ * only after the executables it depends on are.
+ */
+async function waitForPackage(name: string, version: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`https://registry.npmjs.org/${name}`)
+      if (response.ok) {
+        const body = (await response.json()) as { versions?: Record<string, unknown> }
+        if (body.versions?.[version]) return true
+      }
+    } catch {
+      // The registry is unreachable; try again in a moment.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 15_000))
+  }
+  return false
+}
+
 function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return {
     Accept: "application/vnd.github+json",
@@ -290,7 +314,8 @@ if (npmToken) {
   // The configuration refers to the environment variable, so the secret
   // itself is never written to disk.
   await mkdir(releaseDir, { recursive: true })
-  await Bun.write(npmConfig, "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n@imurun:registry=https://registry.npmjs.org/\n")
+  await Bun.write(npmConfig, "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n")
+  const published: string[] = []
   for (const dir of platformDirs) {
     const name = JSON.parse(await readFile(join(dir, "package.json"), "utf8")).name as string
     console.log(`\n▶ publishing ${name} to npm`)
@@ -300,9 +325,31 @@ if (npmToken) {
     })
     if (status !== 0) {
       console.error(`  ${name} was not published — the install will fall back to Bun for this platform.`)
-    } else {
-      console.log(`  done`)
+      continue
     }
+    console.log(`  done`)
+    published.push(name)
+  }
+
+  // The registry finalises a hundred-megabyte tarball in its own time. The
+  // main package waits for the executables it depends on, so an install can
+  // never ask for a version that is not there yet.
+  for (const name of published) {
+    const ready = await waitForPackage(name, version, 10 * 60_000)
+    if (ready) console.log(`  ${name}@${version} is on the registry`)
+    else console.error(`  ${name}@${version} is taking a while — it will be there shortly.`)
+  }
+
+  // And only then the main package, which depends on them.
+  console.log(`\n▶ publishing imurun@${version} to npm`)
+  const mainStatus = runNpm(["publish", npmDir, "--access", "public"], {
+    NPM_TOKEN: npmToken,
+    NPM_CONFIG_USERCONFIG: npmConfig,
+  })
+  if (mainStatus !== 0) {
+    console.error("  imurun was not published to npm.")
+  } else {
+    console.log("  done")
   }
   await rm(npmConfig, { force: true })
 }
