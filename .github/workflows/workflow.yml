@@ -66,12 +66,22 @@ jobs:
   npm:
     name: Publish to npm
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Trusted publishing: npm verifies this workflow with a short-lived OIDC
+      # credential, so no npm token is stored in the repository.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -92,8 +102,15 @@ jobs:
 
       - name: Publish
         if: ${{ !inputs.dry_run }}
+        working-directory: dist/package/npm/imurun
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          cd dist/package/npm/imurun
+          # With a trusted publisher configured, npm accepts the OIDC
+          # credential and no token is needed. When a token secret is set it
+          # is used instead, which is the fallback for a repository that has
+          # not set up trusted publishing yet.
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::No NPM_TOKEN secret - publishing with trusted publishing (OIDC)."
+          fi
           npm publish --access public --provenance

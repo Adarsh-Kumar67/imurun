@@ -95,8 +95,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "IMURUN ${GITHUB_REF_NAME}" \
-            --generate-notes \
-            binaries/* imurun-npm.tgz || \
-          gh release upload "${GITHUB_REF_NAME}" binaries/* imurun-npm.tgz --clobber
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists - replacing its assets"
+            gh release upload "${GITHUB_REF_NAME}" binaries/* imurun-npm.tgz --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "IMURUN ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              binaries/* imurun-npm.tgz
+          fi
