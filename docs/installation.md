@@ -83,7 +83,7 @@ Verify:
 imurun --version
 ```
 
-which prints the version (`imurun 0.1.7` at the time of writing).
+which prints the version (`imurun 0.1.8` at the time of writing).
 
 ## Option 1b — install with pip
 

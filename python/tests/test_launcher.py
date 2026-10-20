@@ -187,6 +187,49 @@ class EntryPointTests(unittest.TestCase):
         finally:
             imurun.urllib.request.urlopen = original  # type: ignore[assignment]
 
+    def test_the_pypi_answer_is_actually_read(self) -> None:
+        """The reply is parsed, not assumed: a missing import would show here."""
+
+        class FakeResponse:
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        original = imurun.urllib.request.urlopen
+        imurun.urllib.request.urlopen = lambda *a, **k: FakeResponse(  # type: ignore[assignment]
+            b'{"info": {"version": "9.9.9"}}'
+        )
+        try:
+            self.assertEqual(imurun._latest_pypi_version(), "9.9.9")
+        finally:
+            imurun.urllib.request.urlopen = original  # type: ignore[assignment]
+
+    def test_a_reply_without_a_version_is_ignored(self) -> None:
+        class FakeResponse:
+            def read(self) -> bytes:
+                return b'{"info": {}}'
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        original = imurun.urllib.request.urlopen
+        imurun.urllib.request.urlopen = lambda *a, **k: FakeResponse()  # type: ignore[assignment]
+        try:
+            self.assertIsNone(imurun._latest_pypi_version())
+        finally:
+            imurun.urllib.request.urlopen = original  # type: ignore[assignment]
+
 
 if __name__ == "__main__":
     unittest.main()

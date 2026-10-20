@@ -29,10 +29,12 @@ and from a standalone binary.
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
 import stat
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -40,7 +42,7 @@ from pathlib import Path
 
 __all__ = ["__version__", "main", "launcher_path", "download_url"]
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 #: Where the releases live. One place, so a move is a one-line change.
 REPO = "shubham001312/imurun"
