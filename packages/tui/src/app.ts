@@ -64,7 +64,7 @@ import type {
   SubagentRunner,
   Todo,
 } from "@imurun/core"
-import { formatHits } from "@imurun/core"
+import { CardVault, formatHits } from "@imurun/core"
 import {
   CATALOG,
   createInstallRenderer,
@@ -86,7 +86,7 @@ import type {
   QuantType,
   Session,
 } from "@imurun/schema"
-import { formatBytes, formatDuration, formatTimestamp, openInSystem, setLogLevel, copyToClipboard } from "@imurun/util"
+import { copyToClipboard, formatBytes, formatDuration, formatTimestamp, imurunDir, openInSystem, setLogLevel } from "@imurun/util"
 import { agentSwitchLine, caret as caretGlyph, ellipsis, progress as animProgress, spinnerFrame } from "./animate"
 import { createCommandRegistry } from "./commands"
 import { collectCodeBlocks, latestAnswer } from "./copy"
@@ -305,7 +305,7 @@ export class TuiApp {
   /** Project material the index fed into the current turn, shown in the panel. */
   private ragSources: Array<{ path: string; start: number; end: number; score: number }> = []
   /** What memory holds, shown in the panel when `tui.showMemoryUsage` is on. */
-  private memoryStats: { notes: number; sessions: number } | undefined
+  private memoryStats: { notes: number; sessions: number; vault?: number; vaultCards?: number } | undefined
   private todos: SidebarTodo[] = []
   /** The plan as stored, so /todo can act on it by number. */
   private todoItems: Todo[] = []
@@ -2894,6 +2894,11 @@ export class TuiApp {
 
   /** `/memory` — what IMURUN remembers, plus an optional recall query. */
   async showMemory(query?: string): Promise<void> {
+    // `/memory vault` is about the second brain, not the flat notes.
+    if (query === "vault" || query?.startsWith("vault ")) {
+      return this.showVault(query.slice("vault".length).trim() || undefined)
+    }
+
     const stats = await this.memory.stats()
     const kinds = Object.entries(stats.byKind)
       .map(([kind, count]) => `${count} ${kind}`)
@@ -2924,8 +2929,83 @@ export class TuiApp {
   }
 
   /**
-   * `/copy` — get text out of the chat and into the clipboard.
-   *
+   * `/memory vault` - the second brain: how healthy it is, where it lives, and
+   * (with `tidy`) the maintenance pass. Cards age on their own; this is the one
+   * command that repairs links, quarantines duplicates and rewrites the map.
+   */
+  async showVault(action?: string): Promise<void> {
+    const vault = this.vault()
+    this.print()
+    this.print(`  ${theme.bold("Memory vault")}`)
+    this.print(`    ${theme.dim("path")}    ${theme.muted(vault.root)}`)
+
+    if (action === "tidy" || action === "maintain" || action === "clean") {
+      const report = await vault.maintain()
+      this.print(`    ${theme.dim("links")}   ${report.brokenLinksRepaired} repaired, ${report.brokenLinksRemaining} still broken`)
+      this.print(
+        `    ${theme.dim("dupes")}   ${
+          report.duplicatesTrashed.length > 0
+            ? `${report.duplicatesTrashed.length} moved to .trash`
+            : "none"
+        }`,
+      )
+      if (report.demoted.length > 0) this.print(`    ${theme.dim("aged")}    ${report.demoted.length} card(s) written back a tier lower`)
+      if (report.orphans.length > 0) {
+        this.print(`    ${theme.dim("orphans")} ${report.orphans.length} (reported, never deleted)`)
+        for (const title of report.orphans.slice(0, 5)) this.print(`      ${theme.muted(sym.bullet)} ${title}`)
+      }
+      this.print(`    ${theme.dim("map")}     MEMORY.md rewritten`)
+    }
+
+    const health = await vault.health()
+    if (health.cards === 0) {
+      this.print(theme.dim("    no cards yet \u00b7 ask IMURUN to remember a project, person or goal"))
+    } else {
+      const colour = health.score >= 80 ? theme.ok : health.score >= 50 ? theme.warn : theme.error
+      this.print(
+        `    ${theme.dim("health")}  ${colour(`${health.score}/100`)} ${theme.dim(`\u00b7 ${health.cards} card(s)`)}`,
+      )
+      if (health.brokenLinks.length > 0) {
+        this.print(`    ${theme.dim("broken")}  ${health.brokenLinks.length} link(s)`)
+        for (const link of health.brokenLinks.slice(0, 4)) {
+          this.print(`      ${theme.muted(sym.bullet)} ${link.from} \u2192 ${link.to}`)
+        }
+      }
+      if (health.duplicates.length > 0) {
+        this.print(`    ${theme.dim("dupes")}   ${health.duplicates.length} duplicated title(s) \u00b7 /memory vault tidy`)
+      }
+      if (!health.hasMoc) this.print(`    ${theme.dim("map")}     MEMORY.md is missing \u00b7 /memory vault tidy`)
+    }
+
+    const pinned = await vault.inject()
+    if (pinned.length > 0) {
+      this.print(`  ${theme.bold("In the prompt")}`)
+      for (const card of pinned.slice(0, 8)) {
+        this.print(`    ${theme.muted(card.tier.padEnd(6))} ${card.title}`)
+      }
+    }
+
+    const persona = await vault.persona()
+    this.print(
+      persona
+        ? `  ${theme.dim("persona")} persona.md is in use`
+        : `  ${theme.dim("persona")} persona.md is empty \u00b7 fill it in and every session starts from it`,
+    )
+    this.print(theme.dim("  /memory vault tidy repairs links, quarantines duplicates and rewrites MEMORY.md"))
+    this.print()
+  }
+
+  /** One vault per root, matching the agent's own choice of path. */
+  private vaultCache?: CardVault
+  private vault(): CardVault {
+    if (!this.vaultCache) {
+      this.vaultCache = new CardVault(this.config.memory.vaultPath ?? imurunDir("vault"))
+    }
+    return this.vaultCache
+  }
+
+  /**
+   * `/copy` - get text out of the chat and into the clipboard.
    * A terminal owns its own selection (shift+drag, or the terminal's own
    * copy key), and nothing IMURUN can do improves on that for a few lines the
    * user can see. What a terminal cannot do is hand over a long code block
@@ -3395,7 +3475,16 @@ export class TuiApp {
       await this.refreshTodos()
       if (this.config.tui.showMemoryUsage) {
         const stats = await this.memory.stats().catch(() => undefined)
-        this.memoryStats = stats ? { notes: stats.notes, sessions: stats.sessions } : undefined
+        const vaultScore = this.config.memory.vault ? await this.vault().health().catch(() => undefined) : undefined
+        this.memoryStats =
+          stats || vaultScore
+            ? {
+                notes: stats?.notes ?? 0,
+                sessions: stats?.sessions ?? 0,
+                vault: vaultScore?.score,
+                vaultCards: vaultScore?.cards,
+              }
+            : undefined
       } else {
         this.memoryStats = undefined
       }

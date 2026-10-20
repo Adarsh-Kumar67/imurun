@@ -192,16 +192,25 @@ decisions, and open todos.
 
 | Argument | Type | Notes |
 | --- | --- | --- |
-| `action` | string (required) | `remember`, `recall`, `forget`, or `todos`. |
+| `action` | string (required) | `remember`, `recall`, `forget`, `todos`, `card`, or `cards`. |
 | `text` | string | For `remember`: the note, as one self-contained sentence. |
 | `kind` | string | For `remember`: `fact`, `preference`, `user_style`, `credential`, `todo`, or `note` (default `note`). |
-| `tags` | string | For `remember`: comma-separated tags. |
-| `query` | string | For `recall`: what to search for. |
+| `tags` | string | For `remember` and `card`: comma-separated tags. |
+| `query` | string | For `recall` and `cards`: what to search for. |
 | `ref` | string | For `forget`: a note id or a text fragment. |
+| `title` | string | For `card`: a short title, unique within its type; it names the file. |
+| `type` | string | For `card`: `note`, `contact`, `project`, `crm`, `goal`, `idea`, `learning`, or `reflection`. |
+| `body` | string | For `card`: markdown; the first paragraph becomes the description, and `[[links]]` connect cards. |
+| `status` | string | For `card`: `open`, `done`, `blocked` — whatever the type needs. |
 
 Recall returns up to 8 relevant entries. A note saved with `kind=credential` is
 encrypted before it reaches disk and is never injected into a prompt; the model
-only sees it when it explicitly recalls it. See [Memory](memory.md).
+only sees it when it explicitly recalls it.
+
+A **card** is for something with shape: a person, a project, a goal, a lesson.
+Cards are written into the vault as markdown, get stronger every time they are
+used, and cross-link with `[[Title]]`. See
+[Memory](memory.md#the-vault--the-second-brain).
 
 ## progress
 

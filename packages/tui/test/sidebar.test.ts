@@ -177,6 +177,26 @@ describe("sidebarLines", () => {
 
     expect(sidebarLines(state).map(stripAnsi).join("\n")).not.toContain("MEMORY")
   })
+
+  test("the vault's health appears beside the notes, and asks for a tidy when it is low", () => {
+    const healthy = sidebarLines({ ...state, memory: { notes: 2, sessions: 1, vault: 92, vaultCards: 8 } })
+      .map(stripAnsi)
+      .join("\n")
+    expect(healthy).toContain("2 note(s) \u00b7 1 session(s)")
+    expect(healthy).toContain("vault 92")
+    expect(healthy).not.toContain("tidy")
+
+    const untidy = sidebarLines({ ...state, memory: { notes: 0, sessions: 0, vault: 41, vaultCards: 3 } })
+      .map(stripAnsi)
+      .join("\n")
+    expect(untidy).toContain("vault 41 \u2014 tidy")
+
+    // An empty vault is not a health problem, so it adds no line of its own.
+    const emptyVault = sidebarLines({ ...state, memory: { notes: 0, sessions: 0, vault: 100, vaultCards: 0 } })
+      .map(stripAnsi)
+      .join("\n")
+    expect(emptyVault).not.toContain("MEMORY")
+  })
 })
 
 describe("sidebarSummary", () => {

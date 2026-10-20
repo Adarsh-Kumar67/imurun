@@ -18,6 +18,8 @@ import {
   getSkill,
   loadSkills,
   scoreSkill,
+  SKILL_PACK_PRESETS,
+  resolveSkillPreset,
   skillsDir,
   syncSkillPack,
   type SkillDefinition,
@@ -34,7 +36,7 @@ export const skillsCommand: Command = {
   name: "skills",
   summary: "List, inspect, search, and import skills",
   usage:
-    "imurun skills [list|show <id>|find <query>|sync [owner/repo]|dir] [--include-restricted] [--branch B] [--limit N]",
+    "imurun skills [list|show <id>|find <query>|sync [preset|owner/repo]|presets|dir] [--include-restricted] [--branch B] [--limit N]",
   options: [
     { name: "include-restricted", type: "boolean", description: "Import source-available skills too (not recommended)" },
     { name: "branch", type: "string", description: "Git branch of the skill pack to read (default: main)" },
@@ -80,6 +82,21 @@ export const skillsCommand: Command = {
           includeRestricted: options["include-restricted"] === true,
           branch: options.branch ? String(options.branch) : undefined,
         })
+
+      case "presets":
+      case "packs": {
+        console.log("")
+        console.log(`  ${chalk.bold("Skill packs")} ${chalk.gray("import one with: imurun skills sync <id>")}`)
+        console.log("")
+        for (const preset of SKILL_PACK_PRESETS) {
+          console.log(`    ${chalk.cyan(preset.id.padEnd(14))} ${chalk.gray(preset.source)}`)
+          console.log(`    ${" ".repeat(14)} ${chalk.gray(preset.description)} ${chalk.gray(`(${preset.license})`)}`)
+        }
+        console.log("")
+        console.log(`  ${chalk.gray("Any public skill repository also works:")} ${chalk.cyan("imurun skills sync owner/repo")}`)
+        console.log("")
+        return 0
+      }
 
       case "dir":
       case "where":
@@ -205,9 +222,11 @@ async function syncSkills(
   source: string | undefined,
   opts: { includeRestricted: boolean; branch?: string },
 ): Promise<number> {
-  const target = source ?? DEFAULT_SKILL_SOURCE
+  const preset = resolveSkillPreset(source)
+  const target = preset?.source ?? source ?? DEFAULT_SKILL_SOURCE
   console.log("")
   console.log(`  ${chalk.bold("Importing skills")} ${chalk.gray("from")} ${chalk.cyan(target)}`)
+  if (preset) console.log(`  ${chalk.gray(preset.description)} ${chalk.gray(`(${preset.license})`)}`)
   if (opts.includeRestricted) console.log(`  ${chalk.yellow("including source-available skills")}`)
   console.log("")
 

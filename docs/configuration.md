@@ -120,6 +120,8 @@ Settings for the local inference daemon. See [Runtime](runtime.md).
 | `crossSession` | boolean | `true` | Recall relevant notes and session summaries from past sessions. Off means only the notes themselves are searched. |
 | `autoSummarize` | boolean | `true` | Summarize sessions automatically on close. |
 | `maxRecallEntries` | integer > 0 | `5` | How many recalled memories to include. |
+| `vault` | boolean | `true` | The card vault (second brain): typed markdown cards that age with disuse and strengthen with use. |
+| `vaultPath` | string | `~/.imurun/vault` | Where the vault lives — point it at your own Obsidian vault if you have one. |
 
 See [Memory](memory.md).
 

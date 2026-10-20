@@ -15,7 +15,7 @@ import {
   skillsToPromptSection,
   type SkillDefinition,
 } from "../src/agent/skills"
-import { syncSkillPack } from "../src/skills/sync"
+import { resolveSkillPreset, syncSkillPack } from "../src/skills/sync"
 
 let home: string
 let work: string
@@ -200,7 +200,11 @@ interface TreeEntry {
   type: string
 }
 
-function fakeGitHub(files: Record<string, string>, opts: { treeStatus?: number; omitManifests?: boolean } = {}) {
+function fakeGitHub(
+  files: Record<string, string>,
+  opts: { treeStatus?: number; omitManifests?: boolean; repo?: string } = {},
+) {
+  const repo = opts.repo ?? "acme/skills"
   const tree: TreeEntry[] = Object.keys(files)
     .filter((path) => /SKILL\.md$/i.test(path) || /LICENSE$/i.test(path))
     .map((path) => ({ path, type: "blob" }))
@@ -213,7 +217,7 @@ function fakeGitHub(files: Record<string, string>, opts: { treeStatus?: number; 
       const status = opts.treeStatus ?? 200
       return { ok: status < 400, status, json: async () => ({ tree }) } as unknown as Response
     }
-    const prefix = "https://raw.githubusercontent.com/acme/skills/main/"
+    const prefix = `https://raw.githubusercontent.com/${repo}/main/`
     if (url.startsWith(prefix)) {
       const body = files[url.slice(prefix.length)]
       if (body === undefined) return { ok: false, status: 404, text: async () => "" } as unknown as Response
@@ -294,5 +298,37 @@ describe("syncSkillPack", () => {
 
     const empty = fakeGitHub(PACK_FILES, { omitManifests: true })
     await expect(syncSkillPack({ source: "acme/skills", fetchImpl: empty.fetchImpl })).rejects.toThrow("No SKILL.md")
+  })
+})
+
+describe("skill pack presets", () => {
+  test("a preset is reachable by its short name or its repository", () => {
+    expect(resolveSkillPreset("second-brain")?.source).toBe("smixs/agent-second-brain")
+    expect(resolveSkillPreset("https://github.com/smixs/agent-second-brain")?.id).toBe("second-brain")
+    expect(resolveSkillPreset("smixs/agent-second-brain.git")?.id).toBe("second-brain")
+    expect(resolveSkillPreset("acme/skills")).toBeUndefined()
+    expect(resolveSkillPreset(undefined)).toBeUndefined()
+  })
+
+  test("the second-brain preset imports what applies, skips its own plumbing, and records MIT", async () => {
+    const dir = join(home, "packs")
+    const { fetchImpl } = fakeGitHub(
+      {
+        "vault/.claude/skills/capture/SKILL.md": "---\nname: Capture\ndescription: capture what was learned\n---\n\nCapture it.\n",
+        "vault/.claude/skills/migrate-doctor/SKILL.md": "---\nname: Migrate doctor\ndescription: v1 to v2\n---\n\nMigrate.\n",
+        "vault/.claude/skills/dbrain-processor/SKILL.md": "---\nname: Dbrain processor\ndescription: process\n---\n\nProcess.\n",
+      },
+      { repo: "smixs/agent-second-brain" },
+    )
+
+    const result = await syncSkillPack({ source: "second-brain", dir, fetchImpl })
+    expect(result.source).toBe("smixs/agent-second-brain")
+    expect(result.imported.map((skill) => skill.id)).toEqual(["capture"])
+    expect(result.skipped.map((skill) => skill.id).sort()).toEqual(["dbrain-processor", "migrate-doctor"])
+    expect(result.skipped.find((skip) => skip.id === "migrate-doctor")?.reason).toContain("does not apply")
+
+    const capture = result.imported[0]!
+    expect(capture.license).toBe("MIT")
+    expect(capture.origin).toBe("https://github.com/smixs/agent-second-brain")
   })
 })

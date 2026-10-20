@@ -17,7 +17,7 @@ on disk, and puts the relevant ones back when they matter.
 All of it is offline, local, and free of telemetry. Nothing is sent anywhere, and
 every piece is a plain file you can read, edit, diff, and delete.
 
-There are five parts:
+There are six parts:
 
 | Part | What it holds | Where it lives |
 | --- | --- | --- |
@@ -26,6 +26,7 @@ There are five parts:
 | Progress ledger | Exact key/value state for resuming interrupted work. | `~/.imurun/memory/ledger/<hash>.json` |
 | Todos | The live checklist the side panel shows. | `<project>/.imurun/todos.md` |
 | Plan | The written goal, approach, and steps. | `<project>/.imurun/PLAN.md` |
+| The vault | Typed cards — people, projects, goals, ideas, lessons — that age and strengthen. | `~/.imurun/vault/` |
 
 ## Durable notes
 
@@ -185,6 +186,120 @@ prompt. For anything bigger than a couple of steps the model is told to write th
 plan first and keep it current. See [Tools](tools.md#todo) and
 [Tools](tools.md#plan).
 
+## The vault — the second brain
+
+Notes are flat: one line each. Some things need shape — a person with an email
+and a history, a project with links to the goals it serves, a lesson that should
+resurface a month later. Those are **cards**, and cards live in a vault.
+
+```
+~/.imurun/vault/
+  MEMORY.md        the map of content (regenerated; open it anywhere)
+  persona.md       about you, written by you (see below)
+  daily/           spare folder for dated notes
+  goals/           goal cards
+  projects/        project and crm cards
+  thoughts/        note, contact, idea, learning, reflection cards
+  MOC/             your own maps, if you make them
+  .trash/          duplicates moved aside, never deleted
+```
+
+Every card is an ordinary markdown file with frontmatter, so you can open the
+vault in any editor or in Obsidian and edit it by hand. IMURUN reads it back
+without a database and without a model.
+
+```markdown
+---
+id: card_8f21ab3c
+type: project
+title: IMURUN release
+tier: active
+created: 2026-10-20T09:00:00.000Z
+accessed: 2026-10-20T09:00:00.000Z
+access-count: 4
+status: open
+tags: [release, cli]
+description: Ship the local-first agent.
+---
+
+Ship the local-first agent. Tracks [[IMURUN goals]] and [[TUI polish]].
+```
+
+| Field | Means |
+| --- | --- |
+| `type` | `note`, `contact`, `project`, `crm`, `goal`, `idea`, `learning`, or `reflection`. |
+| `title` | Unique within its type; the file is named after it. |
+| `tier` | Where the card sits in memory's temperature (below). |
+| `access-count` | How many times the card has been used. |
+| `description` | Taken from the first paragraph unless written by hand. |
+| `[[links]]` | Edges to other cards, by title. `[[Title|alias]]` and `[[Title#heading]]` work. |
+
+### Tiers, and why cards get stronger or fade
+
+Cards are not all equally present. The tier decides what the model sees:
+
+| Tier | Reaches the prompt | How a card gets there |
+| --- | --- | --- |
+| `core` | Always. | Pinned by you, or promoted by repeated use. |
+| `active` | While it was used in the last 7 days. | Every new card starts here. |
+| `warm` | On search. | A month of disuse. |
+| `cold` | On search, ranked lower. | Two months. |
+| `archive` | Only at random, rarely. | Three months, and it does not come back by search. |
+
+Two rules move a card:
+
+- **Use promotes it.** Every recall adds one to `access-count`, updates
+  `accessed`, and raises the tier one step. A card can only reach `core` after
+  eight accesses, so "always in the prompt" is earned rather than awarded once.
+- **Disuse demotes it.** A card untouched for 30 days drops a tier, and another
+  every 30 days after that. Ageing is computed when the vault is read, so a
+  vault left alone for a year reads correctly without anything having run;
+  `maintain` writes the aged tier back for outside editors.
+
+Ranking is offline and lexical: how much of the query the card accounts for,
+with title and tag hits weighted above a mention in the body, multiplied by
+`1 + ln(access-count)` and by the tier weight. No embeddings, no model call.
+
+### Resurfacing
+
+When a turn's question matches no card, IMURUN occasionally picks one cold or
+archived card at random and shows it as a one-line chip above the prompt
+(`recalled · Garden plan — tomatoes and basil`). It is bounded: at most one card,
+never every turn, and never a chat message.
+
+### The persona
+
+`~/.imurun/vault/persona.md` is yours to write. Anything filled in there is put
+in front of the model at the start of every session, above anything IMURUN
+inferred:
+
+```markdown
+# About me
+
+- Name: Shubham
+- Timezone: IST
+- What I am working on: IMURUN, a local-first coding agent
+- How I like answers: short, with the command first
+```
+
+The untouched scaffold is ignored, so an empty persona costs nothing.
+
+### Health and tidying
+
+The vault scores itself out of 100: links (40), orphans (25), duplicate titles
+(20), and whether `MEMORY.md` exists (15). `/memory vault` shows the score, the
+cards in the prompt, and the broken links; `/memory vault tidy` repairs links
+that have one plausible target, moves duplicates to `.trash/` (keeping the
+most-used copy), writes aged tiers back, and regenerates `MEMORY.md`. Orphans
+are reported, never deleted — a card nobody links to can still be the only copy
+of something true.
+
+The side panel shows the score beside the note count and says `— tidy` when it
+falls below 80.
+
+The design is a clean-room port of `smixs/agent-second-brain` (MIT):
+[Third-party notices](../THIRD_PARTY_NOTICES.md).
+
 ## How recall works
 
 Recall is offline and dependency-free. It is a small BM25 ranking over the notes
@@ -215,7 +330,9 @@ At the start of a turn IMURUN gathers, all offline:
 - the project material the index considered relevant, when `rag.autoInject` is on,
 - the open todos (project todos plus up to 10 carried forward from memory),
 - the open progress-ledger entries (up to 12),
-- the written plan, if `.imurun/PLAN.md` exists.
+- the written plan, if `.imurun/PLAN.md` exists,
+- the `core` and recently used `active` cards from the vault, and the persona
+  file when you have filled it in.
 
 Once the conversation is compacted, todos and the plan are left out of the prompt
 and replaced by the compact digest, so the same information is not sent twice.
@@ -232,7 +349,9 @@ The `memory` section of `imurun.json` controls it (see
     "learnStyle": true,
     "crossSession": true,
     "autoSummarize": true,
-    "maxRecallEntries": 5
+    "maxRecallEntries": 5,
+    "vault": true,
+    "vaultPath": "~/Documents/second-brain"
   }
 }
 ```
@@ -244,12 +363,17 @@ kept when you state them); and `crossSession` decides whether session digests ta
 part in recall. With `crossSession: false`, a turn searches only your own notes —
 nothing from past sessions — which is the setting for a shared or audited machine.
 
+`vault` turns the card vault on or off; `vaultPath` points it at your own
+Obsidian vault instead of `~/.imurun/vault`. Both are optional.
+
 ## Managing memory
 
 | Command | Effect |
 | --- | --- |
 | `/memory` | Show the store path, note counts by kind, session count, and open todos. |
 | `/memory <query>` | Search notes and digests (up to 8 hits). |
+| `/memory vault` | Vault health, the cards in the prompt, and the persona status. |
+| `/memory vault tidy` | Repair links, quarantine duplicates, write aged tiers, rewrite `MEMORY.md`. |
 | `/compact` | Fold older turns into the session summary now and free context. |
 | `/plan` | Show the written plan and update it. |
 | `/todo` | Show or edit the checklist. |
@@ -268,6 +392,10 @@ The `imurun sessions` command lists and manages sessions (see
 
 ~/.imurun/
   key                   machine key for encrypted credentials (0600)
+  vault/                the second brain (see above)
+    MEMORY.md           the map of content
+    persona.md          about you, written by you
+    thoughts/ goals/ projects/ daily/ MOC/ .trash/
 
 <project>/.imurun/
   todos.md              the live checklist

@@ -46,9 +46,10 @@ export interface SidebarState {
    */
   sources?: Array<{ path: string; start: number; end: number; score: number }>
   /**
-   * What memory holds. Omitted when `tui.showMemoryUsage` is off.
+   * What memory holds. Omitted when `tui.showMemoryUsage` is off. `vault` is
+   * the second brain's health score out of 100, shown only when it has run.
    */
-  memory?: { notes: number; sessions: number }
+  memory?: { notes: number; sessions: number; vault?: number; vaultCards?: number }
   busy: boolean
 }
 
@@ -184,12 +185,20 @@ export function sidebarLines(state: SidebarState): string[] {
     lines.push(value(theme.accent("\u2937 working"), width))
   }
 
-  if (state.memory && (state.memory.notes > 0 || state.memory.sessions > 0)) {
-    lines.push(blank(width))
-    lines.push(title("memory", width))
-    lines.push(
-      value(theme.muted(`${state.memory.notes} note(s) \u00b7 ${state.memory.sessions} session(s)`), width),
-    )
+  if (state.memory) {
+    const { notes, sessions, vault, vaultCards } = state.memory
+    const parts: string[] = []
+    if (notes > 0 || sessions > 0) parts.push(`${notes} note(s) \u00b7 ${sessions} session(s)`)
+    if (vault !== undefined && (vaultCards ?? 0) > 0) {
+      // A vault that needs tidying says so in the panel, where the user looks.
+      const label = vault >= 80 ? `vault ${vault}` : `vault ${vault} \u2014 tidy`
+      parts.push(label)
+    }
+    if (parts.length > 0) {
+      lines.push(blank(width))
+      lines.push(title("memory", width))
+      lines.push(value(theme.muted(parts.join(" \u00b7 ")), width))
+    }
   }
 
   if (state.sources && state.sources.length > 0) {

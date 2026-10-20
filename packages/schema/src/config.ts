@@ -51,6 +51,13 @@ export const MemoryConfig = z.object({
   /** Automatically summarize sessions on close. */
   autoSummarize: z.boolean().default(true),
   maxRecallEntries: z.number().int().positive().default(5),
+  /**
+   * The card vault — the second brain. Typed markdown cards that age with
+   * disuse and strengthen with use. Off leaves only the flat notes.
+   */
+  vault: z.boolean().default(true),
+  /** Where the vault lives. Default: `~/.imurun/vault`. */
+  vaultPath: z.string().optional(),
 })
 export type MemoryConfig = z.infer<typeof MemoryConfig>
 

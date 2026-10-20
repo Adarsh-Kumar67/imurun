@@ -32,7 +32,7 @@ aliases.
 | `/skills` | — | Run a skill, list them, or import a published skill pack. | `/skills [id\|sync <owner/repo>]` |
 | `/permission` | `/permissions`, `/approve` | Choose how tool calls are approved (`auto`, `manual`, `read-only`). | `/permission [auto\|manual\|readonly]` |
 | `/queue` | — | Show, edit, drop, or clear messages queued behind the current turn. | `/queue [edit <n>\|drop <n>\|clear]` |
-| `/memory` | — | Show what IMURUN remembers, or search it. | `/memory [query]` |
+| `/memory` | - | Show what IMURUN remembers, search it, or tend the vault. | `/memory [query \| vault [tidy]]` |
 | `/copy` | `/yank` | Copy the last answer, or a numbered code block, to the clipboard. | `/copy [list \| <n>]` |
 | `/compact` | — | Free context now: fold older turns into the session summary. | `/compact` |
 | `/tools` | — | List the tools available to the current agent. | `/tools` |
@@ -92,6 +92,18 @@ panel. Both survive restarts, so an interrupted run resumes from them. See
 `index` builds or refreshes it, `search <query>` searches it, and `clear` deletes
 it. The index is also what `code_search` uses, and what feeds the `SOURCES` section
 of the side panel. See [RAG](rag.md).
+
+### `/memory`
+
+`/memory` shows the store, how many notes of each kind it holds, and the open
+todos. `/memory <query>` searches notes and session digests.
+
+`/memory vault` is about the second brain instead: its health score out of 100,
+the cards currently in the prompt, and whether your persona file is in use.
+`/memory vault tidy` repairs links that have exactly one plausible target, moves
+duplicate titles to `.trash/` (keeping the most-used copy), writes aged tiers
+back for editors, and regenerates `MEMORY.md`. Orphans are reported, never
+deleted. See [Memory](memory.md#the-vault--the-second-brain).
 
 ### `/runtime`
 

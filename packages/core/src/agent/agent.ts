@@ -37,6 +37,7 @@ import { planPromptLines } from "../todo/plan"
 import { todoPromptLines } from "../tool/todo"
 import { formatHit } from "../memory/search"
 import { learnFromMessage } from "../memory/learn"
+import { CardVault } from "../memory/brain"
 import { projectRagIndex, refreshRagIndex } from "../rag/config"
 import { formatRagHit } from "../rag/index"
 import { modelSeesImages } from "./vision"
@@ -353,6 +354,44 @@ export class Agent {
       }
     }
 
+    // ── The card vault: the second brain ─────────────────────────────────────
+    // Typed markdown cards that strengthen with use and fade with disuse. The
+    // tier decides what reaches the model: `core` cards always, `active` ones
+    // while they are in play, `warm`/`cold` on search, and — at most one, and
+    // only now and then — an archived card as a nudge from further back. The
+    // persona file, if the user has written one, personalises every prompt.
+    let secondBrain: string[] = []
+    let persona: string | undefined
+    if (memoryOn && config.memory.vault) {
+      try {
+        const vault = this.cardVault(config)
+        await vault.ensureScaffold()
+        persona = await vault.persona()
+        secondBrain = (await vault.inject()).map(
+          (card) => `- [${card.type}] ${card.title}${card.description ? ` \u2014 ${card.description}` : ""}`,
+        )
+        const recalled = await vault.recall(query, { limit: 3 })
+        for (const card of recalled) {
+          memories.push(`[card] ${card.title}${card.description ? ` \u2014 ${card.description}` : ""}`)
+        }
+        if (recalled.length === 0) {
+          // Nothing matched, so this is the moment for a nudge from the back of
+          // the mind: one cold or archived card, and not on every turn.
+          const stray = Math.random() < 0.15 ? await vault.randomRecall() : undefined
+          if (stray) {
+            run.onEvent?.({
+              type: "notice",
+              text: `recalled \u00b7 ${stray.title} \u2014 ${stray.description ?? "an older note"}`,
+              tone: "info",
+            })
+            memories.push(`[card] ${stray.title}${stray.description ? ` \u2014 ${stray.description}` : ""}`)
+          }
+        }
+      } catch (error) {
+        this.log.debug(`card vault skipped: ${errorMessage(error)}`)
+      }
+    }
+
     // ── Project context: what the index already knows about this request ─────
     // Found before the model can ask for it, so a local model with a small
     // window starts the turn with the right files in view instead of spending
@@ -444,6 +483,8 @@ export class Agent {
         instructions: config.instructions,
         memories,
         notes: durableNotes,
+        secondBrain,
+        persona,
         todos: summary ? [] : [...planned, ...todos],
         plan: summary ? undefined : planLines,
         compactedSummary: summary,
@@ -882,6 +923,19 @@ export class Agent {
       model: resolved.modelId,
       provider: resolved.provider.id,
     }
+  }
+
+  /**
+   * One vault per root, reused across turns so the card cache stays warm.
+   * The root follows `memory.vaultPath`, defaulting to `~/.imurun/vault`.
+   */
+  private vaultCache?: { root: string; vault: CardVault }
+  private cardVault(config: ImurunConfig): CardVault {
+    const root = config.memory.vaultPath ?? imurunDir("vault")
+    if (!this.vaultCache || this.vaultCache.root !== root) {
+      this.vaultCache = { root, vault: new CardVault(root) }
+    }
+    return this.vaultCache.vault
   }
 
   private async executeTool(

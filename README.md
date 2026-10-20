@@ -82,6 +82,12 @@ without giving up the machine it runs on.
   here"), personal details are remembered, and anything you ask it to keep as a
   secret is encrypted at rest and never put in a prompt. See
   [Memory](docs/memory.md).
+- **A second brain** — typed cards for people, projects, goals, ideas and
+  lessons, written as ordinary markdown in an Obsidian-compatible vault. Cards
+  strengthen each time they are used and fade with disuse, so what matters keeps
+  reaching the prompt; the vault scores its own health, repairs its links, and
+  keeps a map of content. Your persona file personalises every session. See
+  [Memory](docs/memory.md#the-vault--the-second-brain).
 - **Offline, self-updating RAG** — your codebase is indexed locally and kept fresh
   as you work, so the agent can search everything you have written with no
   internet, no embedding service, and no API key. The best-matching pieces are put
@@ -146,7 +152,7 @@ from slash commands (press `Tab` to complete, `/help` for the list):
 /tools                tools available to the current agent
 /new  /sessions       start or resume sessions (/resume <n|id>)
 /cwd  /status         show or change the working directory · full status
-/memory [query]       what IMURUN remembers · search it
+/memory [query]       what IMURUN remembers · search it (`vault` for the second brain)
 /copy [list | <n>]    copy the last answer, or a code block, to the clipboard
 /compact              free context: fold older turns into the session summary
 /rag [status|index|search <q>|clear]   the code index

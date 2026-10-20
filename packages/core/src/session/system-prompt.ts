@@ -32,6 +32,10 @@ export interface SystemPromptContext {
   agentsDir?: string
   /** Learned user style profile. */
   userStyle?: string
+  /** The persona file the user wrote, when they have filled it in. */
+  persona?: string
+  /** Cards from the memory vault that are in play (core and active tiers). */
+  secondBrain?: string[]
   /** Relevant memories recalled from past sessions (formatted bullet lines). */
   memories?: string[]
   /** Durable notes the user asked IMURUN to keep. */
@@ -160,6 +164,19 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
 
   if (ctx.userStyle) {
     sections.push(`The user's coding style (learned from their code):\n${ctx.userStyle}`)
+  }
+
+  // The persona file the user wrote themselves — it outranks any guess about
+  // who they are, and stays out of the prompt entirely until they fill it in.
+  if (ctx.persona?.trim()) {
+    sections.push(`About the user (from the persona file they wrote — treat it as given):\n${ctx.persona.trim()}`)
+  }
+
+  if (ctx.secondBrain && ctx.secondBrain.length > 0) {
+    sections.push(
+      "Cards from the memory vault that are in play (typed, and strengthened every time they are used; " +
+        `the vault is markdown the user can also edit):\n${bullets(ctx.secondBrain)}`,
+    )
   }
 
   if (ctx.notes && ctx.notes.length > 0) {

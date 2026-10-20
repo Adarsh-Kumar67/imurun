@@ -22,6 +22,50 @@ import type { SkillDefinition } from "../agent/skills"
 
 export const DEFAULT_SKILL_SOURCE = "anthropics/skills"
 
+/** A pack worth knowing by name, so `sync <short-name>` is enough. */
+export interface SkillPackPreset {
+  id: string
+  source: string
+  /** The pack's licence, as recorded on every imported skill. */
+  license: string
+  description: string
+  /**
+   * Skill ids that do not apply to IMURUN. Repository-maintenance tools are the
+   * usual case: a migration doctor for another project's storage layout has
+   * nothing to say here.
+   */
+  skip?: string[]
+  /** Skills that need a port before they are useful; recorded, then skipped. */
+  needsPort?: string[]
+}
+
+export const SKILL_PACK_PRESETS: SkillPackPreset[] = [
+  {
+    id: "anthropic",
+    source: "anthropics/skills",
+    license: "mixed (per skill)",
+    description: "The general-purpose Agent Skills collection.",
+  },
+  {
+    id: "second-brain",
+    source: "smixs/agent-second-brain",
+    license: "MIT",
+    description: "Capture, review and resurface what was learned — the companion skills to the memory vault.",
+    // A v1→v2 upgrade doctor for that project's own storage, and a processor
+    // that expects its own data layout; neither means anything inside IMURUN.
+    skip: ["migrate-doctor", "dbrain-processor"],
+  },
+]
+
+/** Resolves a preset id (or a full `owner/repo`) to its preset, when known. */
+export function resolveSkillPreset(source: string | undefined): SkillPackPreset | undefined {
+  if (!source) return undefined
+  const key = source.trim().toLowerCase()
+  return SKILL_PACK_PRESETS.find(
+    (preset) => preset.id === key || preset.source.toLowerCase() === key.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, ""),
+  )
+}
+
 /** Nicer IMURUN ids for a few well-known pack skills. */
 const RENAMES: Record<string, string> = {
   "skill-creator": "create-skill",
@@ -116,7 +160,8 @@ async function readLicense(
  * which is why the file records its `origin` so the overwrite is explainable.
  */
 export async function syncSkillPack(options: SkillSyncOptions = {}): Promise<SkillSyncResult> {
-  const source = options.source ?? DEFAULT_SKILL_SOURCE
+  const preset = resolveSkillPreset(options.source)
+  const source = preset?.source ?? options.source ?? DEFAULT_SKILL_SOURCE
   const { owner, repo } = parseSource(source)
   const branch = options.branch ?? "main"
   const dir = options.dir ?? skillsDir()
@@ -165,6 +210,16 @@ export async function syncSkillPack(options: SkillSyncOptions = {}): Promise<Ski
       continue
     }
 
+    // A preset knows which of its skills are for another project's plumbing.
+    if (preset?.skip?.includes(rawId) || preset?.skip?.includes(id)) {
+      skipped.push({ id, reason: `does not apply to IMURUN (${preset.id} preset)` })
+      continue
+    }
+    if (preset?.needsPort?.includes(rawId) || preset?.needsPort?.includes(id)) {
+      skipped.push({ id, reason: "expects another project's data layout — port it first" })
+      continue
+    }
+
     const folderPath = manifest.path.split("/").slice(0, -1).join("/")
     const license = await readLicense(api, entries, folderPath)
 
@@ -189,7 +244,7 @@ export async function syncSkillPack(options: SkillSyncOptions = {}): Promise<Ski
       id: localId,
       source: "global",
       origin: `https://github.com/${owner}/${repo}`,
-      license: license ?? "see repository",
+      license: license ?? preset?.license ?? "see repository",
       tags: parsed.tags ?? folder.split(/[-_]/).filter(Boolean),
     }
 

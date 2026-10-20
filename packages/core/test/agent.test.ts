@@ -8,8 +8,10 @@ import { mkdtempSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ImurunConfig } from "@imurun/schema"
+import { imurunDir } from "@imurun/util"
 import {
   Agent,
+  CardVault,
   ImurunDatabase,
   MemoryStore,
   PermissionManager,
@@ -1021,6 +1023,93 @@ describe("what the agent brings into a turn", () => {
       (message) => message.role === "system",
     )
     expect(system?.content).toContain("Shubham")
+    h.store.close()
+    server.close()
+  })
+
+  test("the vault's live cards and the persona reach the prompt, and stale cards stay out", async () => {
+    const server = startFakeServer([textScript("Ready.")])
+    const h = await harness(server.url)
+    const vault = new CardVault(imurunDir("vault"))
+    await vault.ensureScaffold()
+
+    // Active: written now, so it is in play.
+    await vault.save({ type: "project", title: "IMURUN release", body: "Ship the local-first agent." })
+    // Warm and old: searchable, but not pinned into every prompt.
+    const ancient = await vault.save({ type: "note", title: "Ancient garden plan", body: "tomatoes" })
+    writeFileSync(
+      ancient.path,
+      readFileSync(ancient.path, "utf8").replace(/^accessed: .*$/m, `accessed: ${new Date(Date.now() - 200 * 86_400_000).toISOString()}`),
+      "utf8",
+    )
+    writeFileSync(join(imurunDir("vault"), "persona.md"), "# About me\n\n- Name: Shubham\n- Timezone: IST\n", "utf8")
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      memory: new MemoryStore(),
+    })
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    await agent.run({ sessionId: session.id, input: "what should we do next?", workingDir: h.workingDir })
+
+    const system = (server.requests[0]!.messages as Array<{ role: string; content: string }>).find(
+      (message) => message.role === "system",
+    )
+    expect(system?.content).toContain("memory vault that are in play")
+    expect(system?.content).toContain("IMURUN release")
+    expect(system?.content).toContain("About the user")
+    expect(system?.content).toContain("Name: Shubham")
+    // A card that has not been used in months is not forced into the prompt.
+    expect(system?.content).not.toContain("Ancient garden plan")
+    h.store.close()
+    server.close()
+  })
+
+  test("a cold card surfaces as a chip now and then, and never as a chat message", async () => {
+    const server = startFakeServer([textScript("Ready.")])
+    const h = await harness(server.url)
+    const vault = new CardVault(imurunDir("vault"))
+    await vault.ensureScaffold()
+    const card = await vault.save({ type: "idea", title: "Garden plan", body: "tomatoes and basil" })
+    // 70 days of disuse: cold — not pinned, and not matched by the question.
+    writeFileSync(
+      card.path,
+      readFileSync(card.path, "utf8").replace(/^accessed: .*$/m, `accessed: ${new Date(Date.now() - 70 * 86_400_000).toISOString()}`),
+      "utf8",
+    )
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      memory: new MemoryStore(),
+    })
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const { events, onEvent } = collectingEvents()
+
+    // Deterministic: the first candidate, and the coin lands on "surface it".
+    const original = Math.random
+    Math.random = () => 0
+    try {
+      await agent.run({ sessionId: session.id, input: "fix the parser", workingDir: h.workingDir, onEvent })
+    } finally {
+      Math.random = original
+    }
+
+    const chips = events.filter(
+      (event) => event.type === "notice" && /\brecalled\b/.test((event as { text: string }).text),
+    )
+    expect(chips).toHaveLength(1)
+    expect((chips[0] as { text: string }).text).toContain("Garden plan")
+
+    // The chip is a notice, not an assistant turn: nothing in the transcript says it.
+    const answers = events.filter((event) => event.type === "text")
+    expect(JSON.stringify(answers)).not.toContain("Garden plan")
     h.store.close()
     server.close()
   })

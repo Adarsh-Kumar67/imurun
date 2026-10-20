@@ -5,8 +5,11 @@
  * readable by a human, and is retrievable offline (and by RAG later).
  */
 import { NOTE_KINDS } from "@imurun/schema"
+import { imurunDir } from "@imurun/util"
 import { MemoryStore, type MemoryKind } from "../memory/store"
 import { formatHits } from "../memory/store"
+import { CardVault } from "../memory/brain"
+import { CARD_TYPES, type CardType } from "../memory/cards"
 import { asArgs, fail, ok, optionalString, requireString } from "./types"
 import type { ImurunTool } from "./types"
 
@@ -18,6 +21,17 @@ function memoryStore(): MemoryStore {
   return store
 }
 
+/** One vault per root, reused for the life of the process. */
+const vaults = new Map<string, CardVault>()
+function cardVault(root: string): CardVault {
+  let vault = vaults.get(root)
+  if (!vault) {
+    vault = new CardVault(root)
+    vaults.set(root, vault)
+  }
+  return vault
+}
+
 export const memoryTool: ImurunTool = {
   name: "memory",
   description:
@@ -26,13 +40,15 @@ export const memoryTool: ImurunTool = {
     "the user says to remember something or when you learn a lasting thing; action=recall to look " +
     "something up before asking the user again; action=todos to list unfinished work; action=forget to " +
     "delete a stale note. A kind=credential note is encrypted on disk and is never put into the prompt " +
-    "on its own — recall it when you actually need it.",
+    "on its own — recall it when you actually need it. Use action=card for something with shape — a " +
+    "person, project, goal, idea, lesson or reflection — because cards are typed, linked with [[wiki " +
+    "links]] and get stronger each time they are recalled; action=cards searches them.",
   parameters: {
     type: "object",
     properties: {
       action: {
         type: "string",
-        enum: ["remember", "recall", "forget", "todos"],
+        enum: ["remember", "recall", "forget", "todos", "card", "cards"],
         description: "What to do.",
       },
       text: {
@@ -47,15 +63,33 @@ export const memoryTool: ImurunTool = {
       },
       tags: {
         type: "string",
-        description: "For action=remember: comma-separated tags.",
+        description: "For action=remember and action=card: comma-separated tags.",
       },
       query: {
         type: "string",
-        description: "For action=recall: what to search for.",
+        description: "For action=recall or action=cards: what to search for.",
       },
       ref: {
         type: "string",
         description: "For action=forget: a note id or a text fragment to remove.",
+      },
+      title: {
+        type: "string",
+        description: "For action=card: a short title, unique within its type — it becomes the file name.",
+      },
+      type: {
+        type: "string",
+        enum: [...CARD_TYPES],
+        description: "For action=card: note, contact, project, crm, goal, idea, learning or reflection.",
+      },
+      body: {
+        type: "string",
+        description:
+          "For action=card: markdown body. Link other cards as [[Their Title]]; the first paragraph becomes the description.",
+      },
+      status: {
+        type: "string",
+        description: "For action=card: open, done, blocked — whatever the card's type needs.",
       },
     },
     required: ["action"],
@@ -63,13 +97,51 @@ export const memoryTool: ImurunTool = {
   },
   title(args) {
     const action = typeof args.action === "string" ? args.action : "memory"
-    const text = typeof args.text === "string" ? args.text : typeof args.query === "string" ? args.query : ""
+    const text =
+      typeof args.title === "string"
+        ? args.title
+        : typeof args.text === "string"
+          ? args.text
+          : typeof args.query === "string"
+            ? args.query
+            : ""
     return text ? `${action}: ${text.slice(0, 60)}` : action
   },
   async execute(rawArgs, ctx) {
     try {
       const args = asArgs(rawArgs)
       const action = requireString(args, "action")
+
+      // The vault is its own store; the model chooses its root per config.
+      const vault = () => cardVault(ctx.config?.memory.vaultPath ?? imurunDir("vault"))
+
+      if (action === "card") {
+        const title = requireString(args, "title")
+        const type = (optionalString(args, "type") ?? "note") as CardType
+        if (!CARD_TYPES.includes(type)) return fail(`Invalid type "${type}". Use one of: ${CARD_TYPES.join(", ")}.`)
+        const tags = (optionalString(args, "tags") ?? "")
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean)
+        const card = await vault().save({
+          title,
+          type,
+          body: optionalString(args, "body"),
+          tags,
+          status: optionalString(args, "status"),
+        })
+        return ok(`Card saved (${card.type}, ${card.tier}): ${card.title}${card.description ? ` — ${card.description}` : ""}`)
+      }
+
+      if (action === "cards") {
+        const query = optionalString(args, "query") ?? ""
+        const hits = query ? await vault().recall(query, { limit: 6 }) : (await vault().list()).slice(0, 12)
+        if (hits.length === 0) return ok("No cards matched.")
+        return ok(
+          hits.map((card) => `- [${card.type}/${card.tier}] ${card.title}${card.description ? ` — ${card.description}` : ""}`).join("\n"),
+        )
+      }
+
       const mem = memoryStore()
 
       switch (action) {
@@ -117,7 +189,7 @@ export const memoryTool: ImurunTool = {
         }
 
         default:
-          return fail(`Unknown action "${action}". Use remember, recall, forget or todos.`)
+          return fail(`Unknown action "${action}". Use remember, recall, forget, todos, card or cards.`)
       }
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error))

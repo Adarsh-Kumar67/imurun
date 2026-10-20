@@ -178,8 +178,8 @@ const COMMANDS: SlashCommand[] = [
   },
   {
     name: "memory",
-    summary: "Show what IMURUN remembers, or search it",
-    usage: "/memory [query]",
+    summary: "Show what IMURUN remembers, search it, or tend the vault",
+    usage: "/memory [query | vault [tidy]]",
     run(app, args) {
       return app.showMemory(args.join(" ").trim() || undefined)
     },

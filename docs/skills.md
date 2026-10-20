@@ -110,6 +110,8 @@ default source is the public `anthropics/skills` repository.
 imurun skills sync                                  # from the default source
 imurun skills sync owner/repo
 imurun skills sync owner/repo --branch main
+imurun skills presets                               # the packs IMURUN knows by name
+imurun skills sync second-brain                     # a preset, one command
 ```
 
 Two rules keep sync safe and predictable:
@@ -126,6 +128,26 @@ their `origin` (a repository URL) and `license`. Re-running a sync updates skill
 in place. A few well-known pack skills are given friendlier IMURUN ids (for
 example `skill-creator` becomes `create-skill`, `canvas-design` becomes
 `canvas-graphics`).
+
+### Presets
+
+A preset is a pack with a known purpose, so `sync <id>` is enough:
+
+| Preset | Source | What it adds |
+| --- | --- | --- |
+| `anthropic` | `anthropics/skills` | The general-purpose collection (the default). |
+| `second-brain` | `smixs/agent-second-brain` | Capture, review and resurface what was learned — the skills that go with the memory vault. |
+
+A preset can exclude skills that do not apply to IMURUN, and the exclusion is
+reported rather than silent. For `second-brain`, `migrate-doctor` (an upgrade
+doctor for that project's own storage) and `dbrain-processor` (which expects its
+data layout) are skipped. Everything imported records the pack's licence — MIT,
+for that pack. See [Third-party notices](../THIRD_PARTY_NOTICES.md).
+
+A sync imports each skill's `SKILL.md` — its instructions — and nothing else.
+Scripts, references and templates that live beside it stay in the repository, so
+a skill whose instructions call a bundled script is imported as guidance only.
+The pack's own tooling is never installed or run.
 
 ## Note on the skill count
 
