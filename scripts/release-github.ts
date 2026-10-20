@@ -18,7 +18,7 @@
  * Usage (from the workspace root):
  *
  *   GH_TOKEN=... bun run release
- *   bun run release -- --repo=ImuTechz/imurun --targets=bun-windows-x64,bun-linux-x64
+ *   bun run release -- --repo=shubham001312/imurun --targets=bun-windows-x64,bun-linux-x64
  *   bun run release -- --dry-run     # stage + pack, print the plan, touch nothing
  */
 import { copyFile, cp, mkdir, readdir, rm, stat } from "node:fs/promises"
@@ -36,7 +36,7 @@ const flag = (name: string): string | undefined => {
 }
 const has = (name: string): boolean => argv.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`))
 
-const repo = flag("repo") ?? "ImuTechz/imurun"
+const repo = flag("repo") ?? "shubham001312/imurun"
 const dryRun = has("dry-run")
 const targets = flag("targets") ?? "bun-windows-x64,bun-linux-x64,bun-linux-arm64,bun-darwin-x64,bun-darwin-arm64"
 const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN

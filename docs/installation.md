@@ -60,30 +60,30 @@ which prints the version (`imurun 0.1.0` at the time of writing).
 ## Option 2 — install from GitHub
 
 Everything published to npm is also attached to each
-[GitHub release](https://github.com/ImuTechz/imurun/releases), so the same
+[GitHub release](https://github.com/shubham001312/imurun/releases), so the same
 install works without an npm account.
 
 **With npm (needs Bun 1.2+):**
 
 ```bash
-npm install -g https://github.com/ImuTechz/imurun/releases/latest/download/imurun-npm.tgz
+npm install -g https://github.com/shubham001312/imurun/releases/latest/download/imurun-npm.tgz
 ```
 
 **Standalone binary (needs nothing else):** download the file for your platform
-from the [latest release](https://github.com/ImuTechz/imurun/releases/latest)
+from the [latest release](https://github.com/shubham001312/imurun/releases/latest)
 and put it on your PATH:
 
 ```powershell
 # Windows (PowerShell) — into a folder that is already on PATH
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\imurun" | Out-Null
-Invoke-WebRequest -Uri "https://github.com/ImuTechz/imurun/releases/latest/download/imurun-windows-x64.exe" `
+Invoke-WebRequest -Uri "https://github.com/shubham001312/imurun/releases/latest/download/imurun-windows-x64.exe" `
   -OutFile "$env:LOCALAPPDATA\Programs\imurun\imurun.exe"
 ```
 
 ```bash
 # macOS Apple Silicon / Linux x64 — into /usr/local/bin
 sudo curl -L -o /usr/local/bin/imurun \
-  https://github.com/ImuTechz/imurun/releases/latest/download/imurun-darwin-arm64   # or imurun-linux-x64
+  https://github.com/shubham001312/imurun/releases/latest/download/imurun-darwin-arm64   # or imurun-linux-x64
 sudo chmod +x /usr/local/bin/imurun
 ```
 

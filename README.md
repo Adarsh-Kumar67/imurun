@@ -116,7 +116,7 @@ without giving up the machine it runs on.
 ```bash
 # install — either from npm, or straight from GitHub Releases
 npm install -g imurun
-npm install -g https://github.com/ImuTechz/imurun/releases/latest/download/imurun-npm.tgz
+npm install -g https://github.com/shubham001312/imurun/releases/latest/download/imurun-npm.tgz
 
 # open the interactive UI — on a fresh machine this sets up the engine and the
 # best-fitting model automatically, then you can just start talking

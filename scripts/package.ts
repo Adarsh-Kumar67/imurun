@@ -237,7 +237,7 @@ for (const binary of binaries) {
         description: `IMURUN standalone executable for ${platform}-${arch}`,
         license: "MIT",
         author: "ImuTechz",
-        repository: "https://github.com/ImuTechz/imurun",
+        repository: "https://github.com/shubham001312/imurun",
         os: [nodeOs],
         cpu: [arch],
         files: ["bin/"],
@@ -266,9 +266,9 @@ const manifest = {
   description: "Local-first AI coding agent — installs, manages and runs local LLMs on your own machine.",
   license: "MIT",
   author: "ImuTechz",
-  repository: "https://github.com/ImuTechz/imurun",
-  homepage: "https://github.com/ImuTechz/imurun#readme",
-  bugs: "https://github.com/ImuTechz/imurun/issues",
+  repository: "https://github.com/shubham001312/imurun",
+  homepage: "https://github.com/shubham001312/imurun#readme",
+  bugs: "https://github.com/shubham001312/imurun/issues",
   // Bun is the runtime the bundle is built for; the SQLite store cannot open
   // without it, so this is a hard floor rather than a suggestion.
   engines: { bun: ">=1.2.0" },
