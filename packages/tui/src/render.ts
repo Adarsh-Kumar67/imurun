@@ -39,18 +39,43 @@ export type Block =
   | { kind: "raw"; text: string }
   | { kind: "gap" }
 
+// Looked up at render time rather than captured: `setTheme` swaps the colour
+// functions on the shared `theme` object, and tones must follow the palette.
 const TONE_COLOR: Record<Tone, (s: string) => string> = {
-  info: theme.dim,
-  ok: theme.ok,
-  warn: theme.warn,
-  error: theme.error,
+  info: (s) => theme.dim(s),
+  ok: (s) => theme.ok(s),
+  warn: (s) => theme.warn(s),
+  error: (s) => theme.error(s),
 }
 
 const TONE_GLYPH: Record<Tone, string> = {
-  info: sym.bullet,
+  info: sym.diamond,
   ok: sym.ok,
   warn: sym.warn,
   error: sym.fail,
+}
+
+/** A small, quiet mark for each tool family, so calls are scannable. */
+const TOOL_ICON: Record<string, string> = {
+  read: "\u25c9", // ◉
+  glob: "\u2315", // ⌕
+  grep: "\u2315",
+  code_search: "\u2315",
+  write: "\u270e", // ✎
+  edit: "\u270e",
+  shell: "\u2318", // ⌘
+  web_search: "\u2315",
+  web_fetch: "\u21e3", // ⇣
+  task: "\u21b3", // ↳
+  memory: "\u25c7", // ◇
+  progress: "\u25c7",
+  skill: "\u25c7",
+}
+
+/** The icon for a tool title such as "read src/auth.ts". */
+export function toolIcon(title: string): string {
+  const name = title.trim().split(/\s+/)[0] ?? ""
+  return TOOL_ICON[name] ?? sym.diamond
 }
 
 /** Prefixes the first line and indents the rest, then clamps to `width`. */
@@ -77,8 +102,10 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
     case "user": {
       const state = block.state
       const body = renderMarkdown(block.text, { width: Math.max(width - 2, 8) })
+      // The chevron is the one red mark in the transcript: it belongs to the
+      // person typing, not to the machine.
       const marker =
-        state === "pending" ? theme.warn(sym.queued) : state === "undone" ? theme.dim(sym.undone) : theme.accent(sym.arrow)
+        state === "pending" ? theme.warn(sym.queued) : state === "undone" ? theme.dim(sym.undone) : theme.red(sym.arrow)
       const lines = withPrefix(body, `${marker} `, "  ", width)
       if (state === "pending") return lines.map((line) => theme.muted(line))
       if (state === "undone") return lines.map((line) => theme.dim(line))
@@ -98,13 +125,9 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
         `  ${theme.accent(block.expanded ? sym.chevronDown : sym.chevronRight)} ` +
         theme.dim(block.expanded ? label : `${label} \u2014 click to expand`)
       if (!block.expanded) {
-        // While it is streaming, the collapsed line shows how far it has got
-        // rather than nothing: the words change, the line never jumps around.
-        if (block.live) {
-          const words = block.text.trim().split(/\s+/).filter(Boolean)
-          const tail = words.slice(-5).join(" ")
-          return [clampVisible(`${head} ${theme.muted(tail ? `\u00b7 ${tail}` : "")}`, width)]
-        }
+        // Collapsed means collapsed: the model's reasoning stays inside the
+        // block until it is clicked open. Only the label is visible, so a fast
+        // stream can never push half-thoughts through the transcript.
         return [clampVisible(head, width)]
       }
       const wrapped = wrapText(block.text, Math.max(width - 4, 8))
@@ -117,28 +140,45 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
       const running = block.status === "running"
       const icon = running
         ? theme.warn(spinnerFrame(options.tick ?? 0))
-        : block.status === "ok"
-          ? theme.ok(sym.ok)
-          : theme.error(sym.fail)
+        : theme.accent(toolIcon(block.title))
 
       const now = options.now ?? Date.now()
       const elapsed = running ? Math.max(now - (block.startedAt ?? now), 0) : 0
       const phrase =
         running && block.words && block.words.length > 0 ? progressPhrase(block.words, elapsed) : undefined
 
-      const head = phrase
-        ? `${theme.bold(block.title)} ${theme.dim("\u00b7")} ${theme.accent(phrase)}`
-        : theme.bold(block.title)
-      const lines = [`  ${icon} ${head}`]
+      // "read src/auth.ts" reads better as a name and a target: the verb stays
+      // bold, the path takes the code color, and the outcome sits far right.
+      const split = block.title.trim().split(/\s+/)
+      const verb = split[0] ?? block.title
+      const target = block.title.trim().slice(verb.length).trim()
+      let head =
+        `  ${icon} ${theme.bold(verb)}` +
+        (target ? ` ${theme.path(target)}` : "") +
+        (phrase ? `  ${theme.dim(sym.dot)} ${theme.accent(phrase)}` : "")
+
+      if (!running) {
+        const mark = block.status === "ok" ? theme.ok(sym.ok) : theme.error(sym.fail)
+        if (visibleWidth(head) + 4 <= width) {
+          // One clear cell before the sidebar divider: the outcome belongs to
+          // the call, not to the panel.
+          head += " ".repeat(Math.max(width - visibleWidth(head) - 2, 1)) + mark + " "
+        }
+      }
+      const lines = [head]
 
       if (running && block.estimateMs) {
         const fraction = progressFraction(elapsed, block.estimateMs)
-        const barWidth = Math.max(Math.min(width - 10, 28), 8)
-        lines.push(`    ${theme.accent(progressBar(fraction, barWidth))} ${theme.dim(`${Math.round(fraction * 100)}%`)}`)
+        const barWidth = Math.max(Math.min(width - 12, 24), 8)
+        lines.push(
+          `    ${theme.rule(sym.vbar)} ${theme.accent(progressBar(fraction, barWidth))} ${theme.dim(`${Math.round(fraction * 100)}%`)}`,
+        )
       }
       if (block.detail) {
-        const wrapped = wrapText(block.detail, Math.max(width - 6, 8))
-        for (const line of wrapped.slice(0, 4)) lines.push(`    ${theme.dim(line)}`)
+        const wrapped = wrapText(block.detail, Math.max(width - 7, 8))
+        for (const line of wrapped.slice(0, 4)) {
+          lines.push(`    ${theme.rule(sym.vbar)} ${theme.dim(line)}`)
+        }
       }
       return lines.map((line) => clampVisible(line, width))
     }
@@ -147,18 +187,18 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
       const label = block.title ?? block.lang ?? ""
       const head = label ? ` ${label} ` : ""
       const dashes = Math.max(width - 3 - head.length, 0)
-      const lines = [theme.dim("\u256d\u2500") + theme.accent(head) + theme.dim(`${"\u2500".repeat(dashes)}\u256e`)]
+      const lines = [theme.red("\u256d\u2500") + theme.accent(head) + theme.rule(`${"\u2500".repeat(dashes)}\u256e`)]
 
       const body = block.text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n")
       const maxLines = block.maxLines ?? 32
       const shown = body.slice(0, maxLines)
       for (const line of shown) {
-        lines.push(`${theme.dim("\u2502 ")}${highlightCode(line, block.lang ?? "", DEFAULT_MARKDOWN_PALETTE)}`)
+        lines.push(`${theme.rule("\u2502 ")}${highlightCode(line, block.lang ?? "", DEFAULT_MARKDOWN_PALETTE)}`)
       }
-      if (shown.length === 0) lines.push(theme.dim("\u2502"))
-      if (body.length > shown.length) lines.push(theme.dim(`\u2502 \u2026 ${body.length - shown.length} more line(s)`))
-      if (block.note) lines.push(theme.dim(`\u2502 ${block.note}`))
-      lines.push(theme.dim(`\u2570${"\u2500".repeat(Math.max(width - 2, 0))}\u256f`))
+      if (shown.length === 0) lines.push(theme.rule("\u2502"))
+      if (body.length > shown.length) lines.push(theme.rule(`\u2502 \u2026 ${body.length - shown.length} more line(s)`))
+      if (block.note) lines.push(theme.rule(`\u2502 ${block.note}`))
+      lines.push(theme.rule(`\u2570${"\u2500".repeat(Math.max(width - 2, 0))}\u256f`))
       return lines.map((line) => clampVisible(line, width))
     }
 

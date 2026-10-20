@@ -16,6 +16,13 @@ export interface PromptBoxOptions {
   width: number
   /** Maximum text rows inside the box (borders excluded). */
   maxRows?: number
+  /**
+   * A constant text-row count. When set, the box always renders exactly this
+   * many rows — growing input scrolls inside it, and nothing outside the box
+   * (chat output, sidebar, hints) can ever change its height, so the bottom of
+   * the frame never reflows mid-stream.
+   */
+  fixedRows?: number
   placeholder?: string
   /** Right-aligned on the top border, e.g. "esc to interrupt". */
   hint?: string
@@ -52,7 +59,7 @@ export function promptRowCount(input: string, maxRows = 6): number {
 function borderColor(tone: PromptBoxOptions["tone"]): (text: string) => string {
   if (tone === "busy") return theme.warn
   if (tone === "queued") return theme.accent
-  return theme.dim
+  return theme.rule
 }
 
 /**
@@ -84,7 +91,13 @@ export function buildPromptBox(options: PromptBoxOptions): PromptBox {
   const rawLines = input.split("\n")
   const caret = caretPosition(input, at)
 
-  const shownRows = Math.min(Math.max(rawLines.length, 1), maxRows)
+  // A fixed count wins: the box is the same height whether the draft is empty
+  // or ten lines long, which keeps the frame below it perfectly still.
+  const shownRows =
+    options.fixedRows !== undefined
+      ? Math.max(options.fixedRows, 1)
+      : Math.min(Math.max(rawLines.length, 1), maxRows)
+
   let first = 0
   if (rawLines.length > shownRows) {
     first = Math.min(Math.max(caret.row - shownRows + 1, 0), rawLines.length - shownRows)
@@ -109,8 +122,12 @@ export function buildPromptBox(options: PromptBoxOptions): PromptBox {
     if (fitted.text.startsWith("\u2026")) scrolled = true
     layout.push({ line: absolute, start: isPlaceholder ? 0 : fitted.start })
 
-    const plain = ` ${prefix}${fitted.text}`
-    const styled = isPlaceholder ? theme.muted(plain) : paint(plain)
+    // Keep the geometry identical while colouring the chevron on its own: the
+    // marker is one visible cell either way (a red "❯" or a blank).
+    const marker = absolute === 0 ? theme.red("\u276f") : " "
+    const lead = ` ${marker} `
+    const body = isPlaceholder ? theme.muted(fitted.text) : paint(fitted.text)
+    const styled = lead + body
 
     if (absolute === caret.row) cursorCol = 3 + prefix.length + (isPlaceholder ? source.length : fitted.cursor)
     textRows.push(`${border("\u2502")}${padVisible(styled, inner)}${border("\u2502")}`)
@@ -122,7 +139,7 @@ export function buildPromptBox(options: PromptBoxOptions): PromptBox {
   if (inner - 1 - visibleWidth(title) - visibleWidth(hintText) < 2) hintText = ""
   const dashes = Math.max(0, inner - 1 - visibleWidth(title) - visibleWidth(hintText))
   const top =
-    border("\u256d\u2500") + theme.dim(title) + border("\u2500".repeat(dashes)) + theme.dim(hintText) + border("\u256e")
+    theme.red("\u256d\u2500") + theme.dim(title) + border("\u2500".repeat(dashes)) + theme.dim(hintText) + border("\u256e")
 
   // bottom border: ╰──────────────── Ln 2, Col 5 ╯
   // The caret's exact line and column, so the position line answers "where am

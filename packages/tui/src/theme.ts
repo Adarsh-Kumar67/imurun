@@ -7,6 +7,10 @@
  * keeps reading `theme.bold` and simply gets the new color — none of them has
  * to know that a theme exists, or be threaded a palette through twenty
  * functions.
+ *
+ * The default palette is deliberately editorial rather than "terminal neon":
+ * warm ivory text, a muted sand accent, a single brick red for the brand, and
+ * quiet hairline rules. It reads like a printed page that happens to run code.
  */
 import chalk, { Chalk, type ChalkInstance } from "chalk"
 
@@ -15,6 +19,11 @@ export interface Theme {
   brand: ChalkInstance
   /** Highlights that are not the brand: counts, paths in the panel. */
   accent: ChalkInstance
+  /**
+   * The one brand red. It marks the I and T in ImuTechz, the prompt chevron,
+   * and the active edge of the interface — never body text.
+   */
+  red: ChalkInstance
   bold: ChalkInstance
   /** Labels and secondary text on a dark background. */
   dim: ChalkInstance
@@ -24,35 +33,45 @@ export interface Theme {
   ok: ChalkInstance
   warn: ChalkInstance
   error: ChalkInstance
+  /** Hairline rules, borders and other quiet structure. */
+  rule: ChalkInstance
+  /** A full-width title band (foreground + background). */
+  bar: ChalkInstance
 }
 
 /** The default: IMURUN's own colors, drawn for a dark terminal. */
 const DARK: Theme = {
-  brand: chalk.bold.cyan,
-  accent: chalk.cyan,
+  brand: chalk.bold.hex("#F4EFE5"),
+  accent: chalk.hex("#D8C7A8"),
+  red: chalk.red,
   bold: chalk.bold,
-  dim: chalk.gray,
-  muted: chalk.dim,
-  path: chalk.hex("#8ab4f8"),
-  ok: chalk.green,
-  warn: chalk.yellow,
-  error: chalk.red,
+  dim: chalk.hex("#7C776E"),
+  muted: chalk.hex("#B8B2A6"),
+  path: chalk.hex("#9CB7C9"),
+  ok: chalk.hex("#8FBF7F"),
+  warn: chalk.hex("#E0A458"),
+  error: chalk.hex("#E5484D"),
+  rule: chalk.hex("#3A3733"),
+  bar: chalk.bgHex("#161513").hex("#F2EDE3"),
 }
 
 /**
- * A light terminal. Cyan and yellow all but vanish on white, so the same hues
- * are taken down in brightness instead of being changed into different ones.
+ * A light terminal, the same page under daylight: ink on warm paper, with the
+ * brand red kept as the single loud color.
  */
 const LIGHT: Theme = {
-  brand: chalk.bold.blue,
-  accent: chalk.blue,
+  brand: chalk.bold.hex("#24211C"),
+  accent: chalk.hex("#8A5A2B"),
+  red: chalk.red,
   bold: chalk.bold,
-  dim: chalk.hex("#4b5563"),
-  muted: chalk.gray,
-  path: chalk.hex("#1d4ed8"),
-  ok: chalk.hex("#15803d"),
-  warn: chalk.hex("#b45309"),
-  error: chalk.hex("#b91c1c"),
+  dim: chalk.hex("#6E685E"),
+  muted: chalk.hex("#3D3832"),
+  path: chalk.hex("#255E8A"),
+  ok: chalk.hex("#3F7A3A"),
+  warn: chalk.hex("#9A6414"),
+  error: chalk.hex("#A3232B"),
+  rule: chalk.hex("#D8D1C5"),
+  bar: chalk.bgHex("#EDE7DB").hex("#24211C"),
 }
 
 /** No color at all — for logs, pipes, and terminals that mangle escapes. */
@@ -61,6 +80,7 @@ const NONE: Theme = (() => {
   return {
     brand: plain.bold,
     accent: plain,
+    red: plain,
     bold: plain.bold,
     dim: plain.gray,
     muted: plain.dim,
@@ -68,6 +88,8 @@ const NONE: Theme = (() => {
     ok: plain.green,
     warn: plain.yellow,
     error: plain.red,
+    rule: plain.dim,
+    bar: plain,
   }
 })()
 
@@ -111,4 +133,7 @@ export const sym = {
   undone: "\u2298", // ⊘ a queued message that was taken back
   chevronRight: "\u25b8", // ▸ a collapsed thinking block
   chevronDown: "\u25be", // ▾ an expanded thinking block
+  dot: "\u00b7", // ·
+  rule: "\u2500", // ─
+  vbar: "\u2502", // │
 } as const

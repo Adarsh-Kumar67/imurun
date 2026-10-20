@@ -136,4 +136,20 @@ describe("buildPromptBox", () => {
     expect(box.layout.map((entry) => entry.line)).toEqual([0, 1, 2, 3, 4, 5, 6])
     expect(box.cursor.row).toBe(1)
   })
+
+  test("fixedRows pins the height: the box never grows or shrinks", () => {
+    // An empty draft and a five-line draft render the same box height.
+    const empty = buildPromptBox({ input: "", cursor: 0, width: 30, fixedRows: 3 })
+    const multi = buildPromptBox({ input: "one\ntwo\nthree\nfour\nfive", cursor: 24, width: 30, fixedRows: 3 })
+    expect(empty.lines).toHaveLength(5) // top + 3 rows + bottom
+    expect(multi.lines).toHaveLength(5)
+    expect(empty.rows).toBe(3)
+    expect(multi.rows).toBe(3)
+    // The long draft scrolls inside the fixed window and keeps the caret visible.
+    expect(stripAnsi(multi.lines[3]!)).toContain("five")
+    expect(multi.layout.map((entry) => entry.line)).toEqual([2, 3, 4])
+    // Padding rows under a short draft map clicks to the end of the input.
+    expect(empty.layout.map((entry) => entry.line)).toEqual([0, 1, 2])
+    for (const line of empty.lines) expect(visibleWidth(line)).toBe(30)
+  })
 })

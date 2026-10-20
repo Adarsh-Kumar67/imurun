@@ -91,16 +91,16 @@ import { agentSwitchLine, caret as caretGlyph, ellipsis, progress as animProgres
 import { createCommandRegistry } from "./commands"
 import { collectCodeBlocks, latestAnswer } from "./copy"
 import { KeyParser, type KeyEvent, type MouseEvent } from "./keys"
-import { creditLine, renderWordmark, welcomeLines } from "./logo"
+import { agentBadge, chromeDots, headerMark, welcomeLines } from "./logo"
 import { Palette, type PaletteItem } from "./palette"
-import { buildPromptBox, caretPosition, promptRowCount } from "./prompt"
-import { estimateToolMs, progressPhrase, progressWords } from "./progress"
+import { buildPromptBox, caretPosition } from "./prompt"
+import { estimateToolMs, progressBar, progressFraction, progressPhrase, progressWords } from "./progress"
 import { MessageQueue, formatQueue } from "./queue"
 import { composeFrame, reasoningRanges, renderTranscript, type Block, type Tone } from "./render"
 import { Screen } from "./screen"
-import { sidebarLines, type SidebarState, type SidebarTodo } from "./sidebar"
+import { sidebarLines, tailPath, type SidebarState, type SidebarTodo } from "./sidebar"
 import { parseSlash, type ParsedSlash, type SlashRegistry } from "./slash"
-import { firstLine, fitVisible, padVisible, visibleWidth } from "./text"
+import { clampVisible, firstLine, fitVisible, padVisible, visibleWidth, wrapText } from "./text"
 import { sym, setTheme, theme } from "./theme"
 
 export { fitInput } from "./text"
@@ -146,6 +146,12 @@ interface ConfirmModal {
   question: string
   hint: string
   resolve: (answer: string) => void
+  /** Card title above the question ("approve", "confirm"). */
+  title?: string
+  /** A quiet line of context under the question. */
+  note?: string
+  /** The keys that resolve this modal, for the card footer. */
+  allowedKeys: string[]
 }
 
 interface InputModal {
@@ -168,8 +174,24 @@ const SIDEBAR_MIN_COLUMNS = 96
 const SIDEBAR_WIDTH = 26
 /** How long the agent-change transition plays. */
 const AGENT_SWITCH_MS = 700
-/** Maximum input rows inside the prompt box. */
-const MAX_INPUT_ROWS = 7
+/**
+ * The prompt box is always exactly this many text rows, from the first frame to
+ * the last. The draft scrolls inside it, and nothing else on screen — streaming
+ * chat, sidebar sections, hints — can change its height, so the bottom of the
+ * frame never moves mid-turn.
+ */
+const PROMPT_ROWS = 3
+
+/** What the model boot card says while the weights come off disk. */
+const BOOT_WORDS: readonly string[] = [
+  "waking the engine",
+  "loading the weights",
+  "filling the memory",
+  "warming the cache",
+  "almost ready",
+]
+/** Rough cold-start time; only drives the fill rate of the boot card's bar. */
+const BOOT_ESTIMATE_MS = 9_000
 
 /** Commands that must work even while a turn is running. */
 function isExitCommand(text: string): boolean {
@@ -194,6 +216,21 @@ function languageOf(path: string | undefined): string | undefined {
  */
 function padDuration(ms: number): string {
   return formatDuration(ms).padEnd(7, " ")
+}
+
+/** A path as the header shows it: forward slashes and a `~` for the home dir. */
+function displayPath(path: string): string {
+  const normal = path.replace(/\\/g, "/")
+  const home = (process.env.HOME ?? process.env.USERPROFILE)?.replace(/\\/g, "/").replace(/\/+$/, "")
+  if (!home) return normal
+  return normal.toLowerCase().startsWith(home.toLowerCase()) ? `~${normal.slice(home.length)}` : normal
+}
+
+/** A full-width title band: content padded to exactly `width`, then painted. */
+function band(left: string, right: string, width: number): string {
+  const gap = Math.max(width - visibleWidth(left) - visibleWidth(right) - 1, 1)
+  const line = clampVisible(left + " ".repeat(gap) + right, width)
+  return theme.bar(padVisible(line, width))
 }
 
 /**
@@ -270,6 +307,8 @@ export class TuiApp {
   private spinnerTimer?: ReturnType<typeof setInterval>
   private spinnerTick = 0
   private installLine?: string
+  /** Set while the local engine cold-starts; drives the boot card. */
+  private modelBoot?: { model: string; startedAt: number }
 
   // ── input state ──
   private input = ""
@@ -549,9 +588,15 @@ export class TuiApp {
   }
 
   /** Yes/no (plus optional extra keys) through an in-frame modal. */
-  private async confirm(question: string, hint = "[y/N]", allow: string[] = ["y", "n"]): Promise<string> {
+  private async confirm(
+    question: string,
+    hint = "[y/N]",
+    allow: string[] = ["y", "n"],
+    title?: string,
+    note?: string,
+  ): Promise<string> {
     return new Promise<string>((resolve) => {
-      this.modal = { kind: "confirm", question, hint, resolve }
+      this.modal = { kind: "confirm", question, hint, resolve, title, note, allowedKeys: allow }
       this.pendingAllowed = allow
       this.render()
     })
@@ -622,6 +667,14 @@ export class TuiApp {
     if (!entry) return false
 
     const lines = this.input.split("\n")
+    // A fixed-height box has empty padding rows below the draft; a click there
+    // means "put the caret at the end", not "crash on a line that isn't there".
+    if (entry.line < 0 || entry.line >= lines.length) {
+      this.inputCursor = this.input.length
+      this.historyIndex = -1
+      this.syncCompletion()
+      return true
+    }
     const line = lines[entry.line] ?? ""
     // A body line reads `│ ❯ text…`: border, one space, a two-cell marker, then
     // the text. Column 1 is the border, so the text starts at column 5.
@@ -1518,6 +1571,8 @@ export class TuiApp {
         `${theme.bold(toolName)} ${theme.dim(request.detail ?? "")}`,
         "[Y]es / [n]o / [a]lways / [d]eny-always",
         ["y", "n", "a", "d"],
+        "approve",
+        "IMURUN is asking before it touches anything.",
       )
     ).toLowerCase()
 
@@ -1593,12 +1648,20 @@ export class TuiApp {
         this.pushNotice("the local runtime had stopped \u2014 bringing it back up", "warn")
       }
       if (!this.localSession) {
+        // The cold start is the one wait the user cannot see past a silent
+        // screen, so the boot card names the model and shows the load moving.
+        this.modelBoot = { model: resolution.target.modelName, startedAt: Date.now() }
+        this.ensureTick()
+        this.scheduleRender()
         try {
           this.localSession = await ensureLocalRuntime(this.config, resolution.target, this.session.id)
           this.servingName = resolution.target.modelName
         } catch (error) {
           this.printError(`could not start the local runtime: ${(error as Error).message}`)
           return false
+        } finally {
+          this.modelBoot = undefined
+          this.scheduleRender()
         }
       } else {
         await this.localSession.manager.activity(this.session.id).catch(() => {})
@@ -3281,7 +3344,13 @@ export class TuiApp {
   }
 
   private needsAnimation(): boolean {
-    return this.busy || this.agentSwitch !== undefined || this.installLine !== undefined || this.activeSubagents > 0
+    return (
+      this.busy ||
+      this.agentSwitch !== undefined ||
+      this.installLine !== undefined ||
+      this.modelBoot !== undefined ||
+      this.activeSubagents > 0
+    )
   }
 
   private stopTick(): void {
@@ -3330,7 +3399,9 @@ export class TuiApp {
       input: this.input,
       cursor: this.inputCursor,
       width,
-      maxRows: promptRowCount(this.input, MAX_INPUT_ROWS),
+      // Strict geometry: the box never grows or shrinks, whatever the chat or
+      // the draft do. Long drafts scroll inside the fixed window instead.
+      fixedRows: PROMPT_ROWS,
       placeholder: this.statusHint || "ask anything \u2014 or type / for commands",
       hint: this.promptHint(),
       // The caret's place in the draft, on the box's bottom edge: it moves with
@@ -3392,6 +3463,7 @@ export class TuiApp {
     if (this.overlay) return undefined
     if (this.busy) return this.queue.pending ? `${this.queue.size} queued \u00b7 esc interrupts` : "esc interrupts"
     if (this.scroll > 0) return "pgdn to live"
+    if (this.input.trim()) return "enter send"
     return undefined
   }
 
@@ -3765,23 +3837,128 @@ export class TuiApp {
     await this.refreshTodos()
   }
 
+  /**
+   * The top of the window, in two registers: a painted title band with the
+   * maker's lockup and the agent badge, then a quiet chrome row carrying the
+   * window dots and the directory. The second row is dropped first on narrow
+   * terminals, which keeps the name and the agent visible.
+   */
   private headerLines(width: number): string[] {
-    if (width < 40) return [fitVisible(` ${theme.brand("IMURUN")}`, width)]
-    const model = this.modelRef?.replace(/^local\//, "") ?? this.config.model ?? "auto"
-    const parts = [
-      ` ${theme.brand("IMURUN")} ${theme.dim(`v${this.version}`)}`,
-      `${theme.dim("model")} ${theme.accent(model)}`,
-      `${theme.dim("agent")} ${theme.accent(this.agent.id)}`,
-      theme.muted(this.workingDir),
-    ]
-    if (this.scroll > 0) parts.push(theme.warn("\u2191 reading back"))
-    return [fitVisible(parts.join(theme.dim("  \u2502  ")), width)]
+    if (width < 44) {
+      return [band(` ${theme.red(sym.diamond)} ${theme.bold("IMURUN")} ${theme.dim(`v${this.version}`)}`, "", width)]
+    }
+
+    const roster = this.agents.length > 0 ? this.agents : [this.agent]
+    const found = roster.findIndex((agent) => agent.id === this.agent.id)
+    const badge = agentBadge((found >= 0 ? found : 0) + 1, roster.length)
+    const title = band(` ${headerMark(this.version)}`, badge, width)
+    const model = (this.modelRef ?? this.config.model ?? "auto").replace(/^local\//, "")
+    const chrome =
+      ` ${chromeDots()}  ${theme.dim("imurun")}  ${theme.rule(sym.dot)}  ` +
+      theme.accent(tailPath(model, Math.min(Math.max(width - 40, 12), 26)))
+    const lines = [title]
+
+    if (width >= 72) {
+      const right =
+        this.scroll > 0
+          ? theme.warn("\u2191 reading back")
+          : theme.dim(tailPath(displayPath(this.workingDir), Math.min(Math.max(width - 46, 10), 34)))
+      const gap = Math.max(width - visibleWidth(chrome) - visibleWidth(right) - 1, 1)
+      lines.push(fitVisible(chrome + " ".repeat(gap) + right, width))
+    } else {
+      lines.push(fitVisible(chrome, width))
+    }
+    return lines
   }
 
   private overlayLines(width: number, rows: number): string[] {
+    if (this.modelBoot && !this.overlay && !this.modal) return this.modelBootLines(width)
+    if (this.modal?.kind === "confirm") return this.confirmLines(this.modal, width, rows)
     if (this.overlay?.kind === "complete") return this.completionLines(width, rows)
     if (this.overlay?.kind === "pick") return this.pickLines(this.overlay, width, rows)
     return []
+  }
+
+  /**
+   * The permission card. A tool that wants to change something gets a bordered
+   * card with the keys spelled out, not a bare question on the status row.
+   */
+  private confirmLines(modal: ConfirmModal, width: number, rows: number): string[] {
+    const total = Math.min(Math.max(width - 4, 30), 72)
+    const inner = total - 2
+    const lines: string[] = []
+
+    const title = ` ${theme.red(sym.diamond)} ${theme.bold(modal.title ?? "confirm")} `
+    const dashes = Math.max(inner - visibleWidth(title) - 2, 2)
+    lines.push(theme.rule("\u256d\u2500") + title + theme.rule("\u2500".repeat(dashes) + "\u256e"))
+
+    const body = clampVisible(` ${modal.question}`, inner)
+    lines.push(theme.rule("\u2502") + padVisible(body, inner) + theme.rule("\u2502"))
+    if (modal.note) {
+      lines.push(theme.rule("\u2502") + padVisible(` ${theme.dim(modal.note)}`, inner) + theme.rule("\u2502"))
+    }
+
+    // The keys, spelled out: what to press and what it will do. Styled text is
+    // measured with `visibleWidth` (wrapText counts escapes), so the full row
+    // is used when it fits and bare keys when it does not.
+    const keys: Record<string, [string, string]> = {
+      y: ["y", "approve"],
+      n: ["n", "deny"],
+      a: ["a", "always"],
+      d: ["d", "never"],
+    }
+    const full = modal.allowedKeys
+      .map((key) => {
+        const [glyph, word] = keys[key] ?? [key, key]
+        return `${theme.accent(glyph)} ${theme.dim(word)}`
+      })
+      .join(`  ${theme.rule(sym.dot)}  `)
+    const compact = modal.allowedKeys.map((key) => theme.accent(key)).join(` ${theme.rule(sym.dot)} `)
+    const footer = visibleWidth(full) <= inner - 2 ? full : compact
+    lines.push(theme.rule("\u2502") + padVisible(` ${footer}`, inner) + theme.rule("\u2502"))
+
+    lines.push(theme.rule("\u2570" + "\u2500".repeat(inner) + "\u256f"))
+    void rows
+    return lines
+  }
+
+  /**
+   * The model boot card. A local engine takes seconds to load its weights, and
+   * a silent wait reads like a hang: this names the model, moves a bar, and
+   * says what stage the load has reached. It vanishes the moment the runtime
+   * answers.
+   */
+  private modelBootLines(width: number): string[] {
+    if (!this.modelBoot) return []
+    // A warm runtime answers almost instantly; never flash a card for that.
+    const elapsed = Date.now() - this.modelBoot.startedAt
+    if (elapsed < 250) return []
+
+    const total = Math.min(Math.max(width - 4, 30), 64)
+    const inner = total - 2
+    const spin = theme.accent(spinnerFrame(this.spinnerTick))
+
+    const title = ` ${theme.warn(sym.bullet)} starting your model `
+    const dashes = Math.max(inner - visibleWidth(title) - 2, 2)
+    const top = theme.rule("\u256d\u2500") + title + theme.rule("\u2500".repeat(dashes) + "\u256e")
+
+    const name = theme.bold(this.modelBoot.model)
+    const nameRow = `  ${spin}  ${name}`
+
+    const fraction = progressFraction(elapsed, BOOT_ESTIMATE_MS)
+    const barWidth = Math.max(Math.min(inner - 22, 18), 8)
+    const phrase = progressPhrase(BOOT_WORDS, elapsed, 1500)
+    const percent = `${Math.round(fraction * 100)}%`
+    const barRow =
+      `     ${theme.accent(progressBar(fraction, barWidth))} ${theme.dim(percent)}` +
+      `  ${theme.rule(sym.dot)}  ${theme.dim(phrase)}`
+
+    return [
+      top,
+      theme.rule("\u2502") + padVisible(nameRow, inner) + theme.rule("\u2502"),
+      theme.rule("\u2502") + padVisible(barRow, inner) + theme.rule("\u2502"),
+      theme.rule("\u2570" + "\u2500".repeat(inner) + "\u256f"),
+    ]
   }
 
   private completionLines(width: number, rows: number): string[] {
@@ -3903,12 +4080,36 @@ export class TuiApp {
     // is hidden on narrow terminals and this is a setting worth never guessing.
     const mode = this.permissions.getMode()
     const modeText =
-      mode === "auto" ? theme.warn("auto-approve") : mode === "readonly" ? theme.ok("read-only") : theme.dim("manual")
-    return fitVisible(
-      `  ${theme.dim("/")} commands ${theme.dim("\u00b7")} ${theme.dim("shift+tab")} agent ${theme.dim("\u00b7")} ` +
-        `${theme.dim("pgup/pgdn")} scroll ${theme.dim("\u00b7")} approval ${modeText} ${theme.dim("\u00b7")} ` +
-        `${theme.dim("ctrl+c")} twice to exit`,
-      width,
+      mode === "auto"
+        ? theme.warn(`${sym.bullet} auto-approve`)
+        : mode === "readonly"
+          ? theme.ok(`${sym.bullet} read-only`)
+          : theme.dim(`${sym.bullet} manual`)
+    const modeShort =
+      mode === "auto" ? theme.warn(`${sym.bullet} auto`) : mode === "readonly" ? theme.ok(`${sym.bullet} read-only`) : theme.dim(`${sym.bullet} manual`)
+
+    const leftWide =
+      `  ${theme.red(sym.diamond)} ${theme.muted("/")} commands ${theme.rule(sym.dot)} ` +
+      `${theme.muted("shift+tab")} agent ${theme.rule(sym.dot)} ` +
+      `${theme.muted("pgup/pgdn")} scroll`
+    const leftNarrow =
+      `  ${theme.red(sym.diamond)} ${theme.muted("/")} commands ${theme.rule(sym.dot)} ${theme.muted("shift+tab")} agent`
+    const leftTiny = `  ${theme.red(sym.diamond)} ${theme.muted("/")} commands`
+
+    const rightWide = `${theme.dim("imutechz.in")} ${theme.rule(sym.dot)} ${modeText}`
+    const rightNarrow = `${theme.dim("imutechz.in")} ${theme.rule(sym.dot)} ${modeShort}`
+
+    const place = (left: string, right: string): string | undefined => {
+      const gap = width - visibleWidth(left) - visibleWidth(right) - 2
+      return gap >= 1 ? left + " ".repeat(gap) + right + "  " : undefined
+    }
+
+    return (
+      (width >= 96 ? place(leftWide, rightWide) : undefined) ??
+      (width >= 56 ? place(leftNarrow, rightNarrow) : undefined) ??
+      (width >= 46 ? place(leftNarrow, modeShort) : undefined) ??
+      place(leftTiny, modeShort) ??
+      fitVisible(`${leftTiny} ${theme.rule(sym.dot)} ${modeShort}`, width)
     )
   }
 

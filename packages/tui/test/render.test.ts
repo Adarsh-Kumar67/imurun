@@ -62,6 +62,33 @@ describe("renderBlock", () => {
     expect(lines).toContain("created index.html")
   })
 
+  test("reasoning blocks carry their label", () => {
+    const lines = renderBlock({ kind: "reasoning", text: "step one two three", seconds: 7, expanded: false }, 60)
+    expect(lines).toHaveLength(1)
+    const plain = stripAnsi(lines[0]!)
+    expect(plain).toContain("thinking")
+    expect(plain).toContain("7s")
+  })
+
+  test("a collapsed thinking block shows the label only — never the reasoning text", () => {
+    const text = "secret internal reasoning words that must stay hidden until expanded"
+    const idle = renderBlock({ kind: "reasoning", text, seconds: 4 }, 80)
+    const live = renderBlock({ kind: "reasoning", text, seconds: 4, live: true }, 80)
+    for (const lines of [idle, live]) {
+      expect(lines).toHaveLength(1)
+      const plain = stripAnsi(lines[0]!)
+      expect(plain).not.toContain("secret")
+      expect(plain).not.toContain("hidden")
+      expect(plain).toContain("click to expand")
+    }
+  })
+
+  test("an expanded thinking block shows the reasoning", () => {
+    const lines = renderBlock({ kind: "reasoning", text: "the quiet part", seconds: 4, expanded: true }, 60)
+    const plain = lines.map(stripAnsi).join("\n")
+    expect(plain).toContain("the quiet part")
+  })
+
   test("a code block shows the written code in a bordered preview", () => {
     const lines = renderBlock(
       { kind: "code", text: "export const a = 1\nexport const b = 2\n", lang: "ts", title: "wrote src/app.ts" },

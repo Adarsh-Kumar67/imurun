@@ -10,7 +10,7 @@
  * Small terminals get the compact form, so the welcome never wraps.
  */
 import { theme } from "./theme"
-import { clampVisible } from "./text"
+import { clampVisible, padVisible, visibleWidth } from "./text"
 
 const SHADOW: Record<string, string[]> = {
   I: ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
@@ -58,7 +58,7 @@ const I_WIDTH = 3
 export function paintLogoLine(line: string): string {
   const head = line.slice(0, I_WIDTH)
   const rest = line.slice(I_WIDTH)
-  return theme.error(head) + theme.brand(rest)
+  return theme.red(head) + theme.brand(rest)
 }
 
 /** The wordmark, coloured: the "I" red, the rest brand-coloured. */
@@ -66,19 +66,27 @@ export function logoLines(): string[] {
   return LOGO_ART.map(paintLogoLine)
 }
 
+/**
+ * "ImuTechz" as a lockup: the I and the T carry the brand red, the rest of the
+ * name stays in the surrounding colour. Used by the header and the credit.
+ */
+export function techzMark(base: (text: string) => string = theme.brand): string {
+  return theme.red("I") + base("mu") + theme.red("T") + base("echz")
+}
+
+/** "by ImuTechz" — the maker's mark, with the I and the T in red. */
+export function creditLine(): string {
+  return theme.dim("by ") + theme.red("I") + theme.dim("mu") + theme.red("T") + theme.dim("echz")
+}
+
+/** Visible width of the credit line. */
+export const CREDIT_WIDTH = "by ImuTechz".length
+
 /** The wordmark, falling back to the compact form, ready to print. */
 export function renderWordmark(budget: number): string[] {
   if (budget >= LOGO_WIDTH) return logoLines()
   return COMPACT_ART.map((line) => theme.brand(line))
 }
-
-/** "by ImuTechz" — the maker's mark, with the I and the T in red. */
-export function creditLine(): string {
-  return theme.dim("by ") + theme.error("I") + theme.dim("mu") + theme.error("T") + theme.dim("echz")
-}
-
-/** Visible width of the credit line. */
-export const CREDIT_WIDTH = "by ImuTechz".length
 
 export interface WelcomeOptions {
   /** Available columns in the transcript area. */
@@ -87,6 +95,46 @@ export interface WelcomeOptions {
   model: string
   agent: string
   workingDir: string
+}
+
+/** A rounded card of the three facts that matter, drawn to `width`. */
+function infoCard(width: number, rows: Array<[string, string]>): string[] {
+  const total = Math.min(Math.max(width - 2, 20), 64)
+  const inner = total - 2
+  const indent = " ".repeat(Math.max(Math.floor((width - total) / 2), 0))
+  const chip = " ready "
+  const left = Math.max(Math.floor((inner - chip.length) / 2), 1)
+  const right = Math.max(inner - chip.length - left, 1)
+  const top = theme.rule("\u256d" + "\u2500".repeat(left)) + theme.dim(chip) + theme.rule("\u2500".repeat(right) + "\u256e")
+
+  const lines = [indent + top]
+  for (const [label, value] of rows) {
+    const labelText = theme.dim(label.padEnd(8))
+    const room = Math.max(inner - 10, 4)
+    const text = clampVisible(value, room)
+    lines.push(indent + theme.rule("\u2502") + padVisible(` ${labelText} ${text}`, inner) + theme.rule("\u2502"))
+  }
+
+  const site = " imutechz.in "
+  if (inner >= site.length + 8) {
+    const before = Math.floor((inner - site.length) / 2)
+    const after = inner - site.length - before
+    lines.push(
+      indent +
+        theme.rule("\u2570" + "\u2500".repeat(before)) +
+        theme.dim(site) +
+        theme.rule("\u2500".repeat(after) + "\u256f"),
+    )
+  } else {
+    lines.push(indent + theme.rule("\u2570" + "\u2500".repeat(inner) + "\u256f"))
+  }
+  return lines
+}
+
+/** Centres a styled line within `width`, keeping its visible width intact. */
+function centred(text: string, width: number): string {
+  const pad = Math.max(Math.floor((width - visibleWidth(text)) / 2), 0)
+  return " ".repeat(pad) + text
 }
 
 /**
@@ -112,13 +160,55 @@ export function welcomeLines(options: WelcomeOptions): string[] {
   }
 
   out.push("")
-  out.push(`  ${theme.dim("model")}  ${theme.accent(options.model)}`)
-  out.push(`  ${theme.dim("agent")}  ${theme.accent(options.agent)}`)
-  out.push(`  ${theme.dim("cwd")}    ${theme.muted(options.workingDir)}`)
+  out.push(...infoCard(width, [
+    ["model", theme.accent(options.model)],
+    ["agent", theme.accent(options.agent)],
+    ["cwd", theme.muted(options.workingDir)],
+  ]))
   out.push("")
-  out.push(`  ${theme.dim(`IMURUN v${options.version} \u00b7 your code, your machine, your model`)}`)
-  out.push(`  ${theme.dim("Type a message to start, or / for commands.")}`)
-  out.push(`  ${theme.dim("shift+tab switches agent \u00b7 enter sends \u00b7 esc interrupts")}`)
+  out.push(
+    centred(
+      `${theme.red("\u25c6")} ${theme.dim("Type a message to start")} ${theme.rule("\u00b7")} ${theme.dim("/ for commands")}`,
+      width,
+    ),
+  )
+  out.push(
+    centred(
+      `${theme.dim("shift+tab")} agent ${theme.rule("\u00b7")} ${theme.dim("enter")} send ${theme.rule("\u00b7")} ${theme.dim("esc")} interrupt`,
+      width,
+    ),
+  )
+  out.push(
+    centred(
+      `${theme.dim(`IMURUN v${options.version}`)} ${theme.rule("\u00b7")} ${theme.muted("your code, your machine, your model")}`,
+      width,
+    ),
+  )
   out.push("")
   return out.map((line) => clampVisible(line, width))
 }
+
+/** A compact inline lockup for the header: "ImuTechz · IMURUN". */
+export function headerMark(version: string): string {
+  return `${techzMark()}  ${theme.bold("IMURUN")} ${theme.dim(`v${version}`)}`
+}
+
+/** Visible width of the header lockup, for layout decisions. */
+export const HEADER_MARK_WIDTH = "ImuTechz  IMURUN v".length
+
+/** The three window dots, red / amber / green, as a small chrome motif. */
+export function chromeDots(): string {
+  return `${theme.red("\u25cf")} ${theme.warn("\u25cf")} ${theme.ok("\u25cf")}`
+}
+
+/** Visible width of `chromeDots`. */
+export const CHROME_DOTS_WIDTH = 5
+
+/** A right-aligned agent badge: "AGENT 03/05". */
+export function agentBadge(index: number, total: number): string {
+  const pad = (value: number): string => String(Math.max(value, 0)).padStart(2, "0")
+  return `${theme.dim("AGENT")} ${theme.accent(pad(index))}${theme.dim(`/${pad(total)}`)}`
+}
+
+/** Visible width of an agent badge with two-digit numbers. */
+export const AGENT_BADGE_WIDTH = "AGENT 00/00".length

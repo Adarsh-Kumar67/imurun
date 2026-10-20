@@ -92,7 +92,7 @@ function title(text: string, width: number): string {
 }
 
 function value(text: string, width: number): string {
-  return padVisible(` ${text}`, width)
+  return padVisible(`  ${text}`, width)
 }
 
 function blank(width: number): string {
@@ -140,7 +140,7 @@ export function sidebarLines(state: SidebarState): string[] {
 
   lines.push(title("permissions", width))
   const permColor = state.permissions === "auto" ? theme.warn : state.permissions === "readonly" ? theme.ok : theme.accent
-  lines.push(value(permColor(state.permissions), width))
+  lines.push(value(`${permColor("\u25cf")} ${permColor(state.permissions)}`, width))
   lines.push(blank(width))
 
   lines.push(title("directory", width))
