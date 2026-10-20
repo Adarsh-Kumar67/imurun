@@ -98,6 +98,18 @@ function runNpm(args: string[], env: Record<string, string>): number {
   return result.status ?? 1
 }
 
+/** True when the package version is already on the registry. */
+async function isPublished(name: string, version: string): Promise<boolean> {
+  try {
+    const response = await fetch(`https://registry.npmjs.org/${name}`)
+    if (!response.ok) return false
+    const body = (await response.json()) as { versions?: Record<string, unknown> }
+    return Boolean(body.versions?.[version])
+  } catch {
+    return false
+  }
+}
+
 /**
  * Waits for a package to appear on the registry.
  *
@@ -316,6 +328,13 @@ if (npmToken) {
   await mkdir(releaseDir, { recursive: true })
   await Bun.write(npmConfig, "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n")
   const published: string[] = []
+
+  // A version that is already on the registry is not published again. npm
+  // would refuse it anyway, and the attempt is noise.
+  const already = await isPublished("imurun", version)
+  if (already) {
+    console.log(`\n  imurun@${version} is already on npm — it is left alone.`)
+  }
   for (const dir of platformDirs) {
     const name = JSON.parse(await readFile(join(dir, "package.json"), "utf8")).name as string
     console.log(`\n▶ publishing ${name} to npm`)
@@ -351,15 +370,19 @@ if (npmToken) {
   }
 
   // And only then the main package, which depends on them.
-  console.log(`\n▶ publishing imurun@${version} to npm`)
-  const mainStatus = runNpm(["publish", npmDir, "--access", "public"], {
-    NPM_TOKEN: npmToken,
-    NPM_CONFIG_USERCONFIG: npmConfig,
-  })
-  if (mainStatus !== 0) {
-    console.error("  imurun was not published to npm.")
+  if (already) {
+    console.log("  (the main package is not published again)")
   } else {
-    console.log("  done")
+    console.log(`\n▶ publishing imurun@${version} to npm`)
+    const mainStatus = runNpm(["publish", npmDir, "--access", "public"], {
+      NPM_TOKEN: npmToken,
+      NPM_CONFIG_USERCONFIG: npmConfig,
+    })
+    if (mainStatus !== 0) {
+      console.error("  imurun was not published to npm.")
+    } else {
+      console.log("  done")
+    }
   }
   await rm(npmConfig, { force: true })
 }
