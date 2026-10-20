@@ -89,9 +89,24 @@ hands the mouse back so you can select and copy the ordinary way, without
 leaving the interface; the same key takes it back. `/copy` copies the last
 answer to the clipboard directly.
 
+A mouse report that arrives in two pieces is held back until the rest turns
+up, rather than being typed into the prompt — so a click never turns into a
+line of gibberish. Both the modern SGR encoding and the older X10 one are
+understood.
+
 URLs in the transcript are **clickable**: they are written as OSC 8
 hyperlinks, so ctrl-click opens them in a terminal that supports it, and they
 read as plain text everywhere else.
+
+### On a slow machine
+
+The interface repaints itself several times a second while the agent works.
+Only the rows that actually changed are sent to the terminal, so a spinner
+ticking in one corner of a wide window writes one line rather than the whole
+window. The header is painted once and cached, and the project index is given
+a time budget: a directory that is not really a project — a home directory, a
+drive root — is indexed for a couple of seconds and finished off later,
+rather than stalling the first turn.
 
 ### The model boot card
 
