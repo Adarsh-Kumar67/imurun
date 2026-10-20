@@ -43,7 +43,16 @@ import { projectRagIndex, refreshRagIndex } from "../rag/config"
 import { formatRagHit } from "../rag/index"
 import { modelSeesImages } from "./vision"
 import { selectSkills, skillsToPromptSection } from "./skills"
+import { skillRouterFor } from "./skill-router"
 import type { SkillDefinition } from "./skills"
+import {
+  MAX_RESEARCH_VERIFICATIONS,
+  ResearchEngine,
+  claimCheckPrompt,
+  claimQueries,
+  unsupportedClaims,
+  type ResearchBundle,
+} from "../research/engine"
 
 export type AgentEvent =
   | { type: "step-start"; step: number }
@@ -76,6 +85,23 @@ export type AgentEvent =
    * suddenly know the codebase.
    */
   | { type: "rag"; hits: Array<{ path: string; start: number; end: number; score: number }> }
+  /**
+   * IMURUN searched the web for this turn. The sources are named so the UI can
+   * show what the answer was built from, exactly as it does for the index.
+   */
+  | {
+      type: "research"
+      sources: Array<{ title: string; url: string }>
+      /** Why the search happened, in the engine's own words. */
+      reason: string
+      /** The queries that were run. */
+      queries: string[]
+    }
+  /**
+   * A claim in the answer was not supported by the evidence, and a follow-up
+   * search was run to check it.
+   */
+  | { type: "research-claim"; claims: string[] }
   | { type: "tool-start"; callId: string; name: string; args: unknown; title?: string }
   | { type: "tool-end"; callId: string; name: string; ok: boolean; output: string; title?: string }
   | { type: "permission"; request: PermissionRequest; allowed: boolean }
@@ -113,6 +139,11 @@ export interface RunOptions {
   /** Skip automatic skill selection for this run. */
   disableSkills?: boolean
   /**
+   * Skip the automatic research step for this run. The `web_search` tool
+   * stays available — only the pre-answer search is switched off.
+   */
+  disableResearch?: boolean
+  /**
    * The model's real context window in tokens, as reported by the runtime.
    * Everything the agent sends is budgeted against it.
    */
@@ -145,8 +176,16 @@ export interface AgentOptions {
   memory?: MemoryStore
   /** Skill library; the best match is applied automatically to each request. */
   skills?: SkillDefinition[]
+  /**
+   * The research engine: it decides whether a question needs the internet,
+   * searches, reads the pages and checks the answer's claims against them.
+   * Without one, the agent relies on the model calling `web_search` itself.
+   */
+  research?: ResearchEngine
   /** Interactive permission handler; when absent, "ask" decisions are denied. */
   onPermission?: (request: PermissionRequest, toolName: string) => Promise<boolean>
+  /** The source of randomness; injectable so tests are deterministic. */
+  random?: () => number
   log?: Logger
 }
 
@@ -179,6 +218,8 @@ const VERIFY_PROMPT =
 
 /** How many capability-refusal corrections a single turn may spend. */
 const MAX_REFUSAL_NUDGES = 1
+/** How often a turn with no matching card gets one anyway, from the back of the mind. */
+const RANDOM_RECALL_CHANCE = 0.15
 
 function zeroUsage(): AgentUsage {
   return { inputTokens: 0, outputTokens: 0 }
@@ -258,9 +299,18 @@ function permissionDetail(toolName: string, args: Record<string, unknown>): stri
 
 export class Agent {
   private readonly log: Logger
+  /**
+   * The source of randomness. Injectable so a test can decide whether a turn
+   * gets the occasional stray memory — otherwise one test in six fails for
+   * reasons that have nothing to do with what it is testing.
+   */
+  private readonly random: () => number
 
   constructor(private readonly options: AgentOptions) {
     this.log = options.log ?? createLogger("agent")
+    // The default reads Math.random at call time, so a test that replaces it
+    // still works; injecting `random` makes the behaviour explicit instead.
+    this.random = options.random ?? ((): number => Math.random())
   }
 
   async run(run: RunOptions): Promise<RunResult> {
@@ -381,7 +431,7 @@ export class Agent {
         if (recalled.length === 0) {
           // Nothing matched, so this is the moment for a nudge from the back of
           // the mind: one cold or archived card, and not on every turn.
-          const stray = Math.random() < 0.15 ? await vault.randomRecall() : undefined
+          const stray = this.random() < RANDOM_RECALL_CHANCE ? await vault.randomRecall() : undefined
           if (stray) {
             run.onEvent?.({
               type: "notice",
@@ -428,16 +478,71 @@ export class Agent {
     // sources are recorded exactly once.
     let ragRecorded = false
 
+    // ── Research: search before the first token, not after ──────────────────
+    // A small local model will happily answer "what is the current Node LTS"
+    // from memory, and a bigger one is not much better at knowing it is
+    // supposed to look. The decision is taken here instead: a learned engine
+    // reads the request, and if it is about the world rather than about this
+    // codebase, IMURUN searches, reads the pages, and puts the evidence in the
+    // prompt with numbered citations.
+    const research = this.options.research
+    let researchBundle: ResearchBundle | undefined
+    let researchSection: string[] = []
+    /** True when the model called web_search itself during this turn. */
+    let modelSearched = false
+    const researchEnabled =
+      Boolean(research) &&
+      !run.disableResearch &&
+      config.web.research !== "off" &&
+      activeTools.get("web_search") !== undefined
+    if (researchEnabled && research) {
+      try {
+        const assessment = research.assess(query, { projectHits: ragHits.length })
+        const forced = config.web.research === "always"
+        if (forced || assessment.needed) {
+          const bundle = await research.gather(query)
+          researchBundle = bundle
+          if (bundle.sources.length > 0) {
+            const text = research.format(bundle)
+            if (text) researchSection = [text]
+            run.onEvent?.({
+              type: "research",
+              sources: bundle.sources.map((source) => ({ title: source.title, url: source.url })),
+              reason: forced ? "research is always on" : assessment.reasons.join("; "),
+              queries: bundle.queries,
+            })
+            this.log.debug(`research: ${bundle.sources.length} source(s) for "${query.slice(0, 80)}"`)
+          } else {
+            // The search found nothing. The turn carries on without evidence
+            // rather than pretending it did not need any.
+            this.log.debug(`research: no usable sources for "${query.slice(0, 80)}"`)
+          }
+        }
+      } catch (error) {
+        // Offline, blocked, or a backend that is down: the turn continues.
+        this.log.debug(`research skipped: ${errorMessage(error)}`)
+      }
+    }
+
     // ── Skills: apply the method that fits this request ────────────────────
     // A skill is a way of working, so it belongs in the prompt; the user should
     // not have to remember a command for it to be used.
     let skillSections: string[] = []
+    /** The skill that was applied, so the turn's outcome can label it. */
+    let appliedSkill: { id: string; definition: SkillDefinition } | undefined
     const skillLibrary = this.options.skills ?? []
     if (!run.disableSkills && skillLibrary.length > 0) {
-      const matches = selectSkills(promptQuery(run.input), skillLibrary, { limit: 1 })
+      // The router learns: the overlap score finds the candidates, and the
+      // per-skill classifier re-ranks them by what has actually worked.
+      const router = await skillRouterFor().catch(() => undefined)
+      const matches = router
+        ? router.select(promptQuery(run.input), skillLibrary, 1)
+        : selectSkills(promptQuery(run.input), skillLibrary, { limit: 1 })
       const section = skillsToPromptSection(matches)
       if (section) {
         skillSections = [section]
+        const first = matches[0]
+        if (first) appliedSkill = { id: first.skill.id, definition: first.skill }
         for (const match of matches) run.onEvent?.({ type: "skill", id: match.skill.id, name: match.skill.name })
         this.log.debug(`applying skill: ${matches.map((match) => match.skill.id).join(", ")}`)
       }
@@ -492,7 +597,7 @@ export class Agent {
         todos: summary ? [] : [...planned, ...todos],
         plan: summary ? undefined : planLines,
         compactedSummary: summary,
-        extraSections: [...(run.extraSystemSections ?? []), ...skillSections, ...ragSection],
+        extraSections: [...(run.extraSystemSections ?? []), ...skillSections, ...ragSection, ...researchSection],
         inProgress,
       })
 
@@ -547,6 +652,8 @@ export class Agent {
     let steps = 0
     let continuations = 0
     let refusalNudges = 0
+    /** How many times the answer's claims have been checked against evidence. */
+    let researchVerifications = 0
     // Multistep discipline: remember what this turn changed and whether anything
     // looked at it afterwards, so the agent checks its own work before finishing.
     const verifyChanges = run.verifyChanges ?? true
@@ -556,6 +663,8 @@ export class Agent {
     const changedFiles = new Map<string, number>()
     let lastInspectionStep = 0
     let verifications = 0
+    /** How many tool calls failed this turn — the label for the skill router. */
+    let toolFailures = 0
 
     while (maxSteps === undefined || steps < maxSteps) {
       steps++
@@ -798,6 +907,47 @@ export class Agent {
       }
 
       if (toolCalls.length === 0) {
+        // ── Claim check: does the answer match the evidence? ────────────────
+        // The model wrote a draft. If it cited a source number that does not
+        // exist, or stated a fact the pages do not contain, the answer is
+        // corrected rather than shipped. One extra search, bounded.
+        if (
+          researchBundle &&
+          research &&
+          researchVerifications < MAX_RESEARCH_VERIFICATIONS &&
+          text.trim()
+        ) {
+          const claims = unsupportedClaims(text, researchBundle)
+          if (claims.length > 0) {
+            const queries = claimQueries(claims)
+            if (queries.length > 0) {
+              researchVerifications++
+              run.onEvent?.({
+                type: "research-claim",
+                claims: claims.map((claim) => claim.text),
+              })
+              try {
+                const followUp = await research.gather(query, { queries })
+                researchBundle = ResearchEngine.merge(researchBundle, followUp)
+                const section = research.format(researchBundle)
+                if (section) researchSection = [section]
+                // The prompt grows, so the history budget has to shrink with it.
+                system = buildSystem(compactedSummary)
+                historyBudget = planHistoryChars(contextWindow, system.length)
+                sessions.addMessage({
+                  sessionId: session.id,
+                  role: "user",
+                  content: claimCheckPrompt(claims),
+                })
+                this.log.debug(`claim check: ${claims.length} unsupported claim(s), one follow-up search`)
+                continue
+              } catch (error) {
+                this.log.debug(`claim check skipped: ${errorMessage(error)}`)
+              }
+            }
+          }
+        }
+
         // A small model's chat-assistant prior sometimes answers a request with
         // "I cannot execute shell commands" while sitting on a working shell.
         // The turn is not over: one correction names its real tools and asks it
@@ -918,7 +1068,16 @@ export class Agent {
           }
         }
 
+        // The model reached for the internet on its own. That is a label:
+        // this request did need research, whoever decided it. The engine gets
+        // better at noticing the next one.
+        if (result.ok && call.name === "web_search" && research) {
+          modelSearched = true
+          await research.learn(query, true, 0.6, { projectHits: ragHits.length }).catch(() => {})
+        }
+
         this.log.debug(`tool ${call.name} ${result.ok ? "ok" : "failed"}`)
+        if (!result.ok) toolFailures++
       }
     }
 
@@ -938,6 +1097,32 @@ export class Agent {
         await memory.summarize(sessions.get(session.id) ?? session, history())
       } catch (error) {
         this.log.debug(`memory digest skipped: ${errorMessage(error)}`)
+      }
+    }
+
+    // The last label for the research engine: this turn did not need the
+    // internet. A quiet, negative example is worth as much as a positive one
+    // — without it the engine would learn to search everything.
+    if (research && !researchBundle && !modelSearched) {
+      await research.learn(query, false, 0.35, { projectHits: ragHits.length }).catch(() => {})
+    }
+
+    // The label for the skill router: a skill that was applied to a turn that
+    // ended in an answer, with nothing failing along the way, helped. One that
+    // was applied to a turn full of failures did not — and the next request
+    // that looks similar will go to a different skill.
+    if (appliedSkill) {
+      try {
+        const router = await skillRouterFor()
+        const helped = toolFailures === 0 && finalText.trim().length > 0
+        router.learn(appliedSkill.id, query, appliedSkill.definition, helped)
+        await router.save()
+        this.log.debug(
+          `skill ${appliedSkill.id}: ${helped ? "helped" : "did not help"} ` +
+            `(${toolFailures} tool failure(s), ${finalText.length} chars of answer)`,
+        )
+      } catch (error) {
+        this.log.debug(`skill router skipped: ${errorMessage(error)}`)
       }
     }
 

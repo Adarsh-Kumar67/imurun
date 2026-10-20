@@ -18,7 +18,9 @@ work ([CLI reference](cli-reference.md#imurun-run)).
 
 ## The screen
 
-The interface has four parts:
+The interface has four parts, and each one is **isolated**: the chat cannot
+resize the prompt box, the prompt box cannot resize the panel, and a fast
+stream of tokens cannot make anything jump around.
 
 ```
 ┌──────────────────────────────────────────────┬──────────────────────┐
@@ -39,17 +41,59 @@ The interface has four parts:
 └──────────────────────────────────────────────┴──────────────────────┘
 ```
 
-- **The transcript** is the tall left column. Your messages are prefixed `❯`,
-  the model's answers stream in below, and each tool call shows up as a small
-  card with a one-line status (spinner while running, tick when done).
+- **The title band** is the top line: the `ImuTechz` lockup (with the **I**
+  and the **T** in the brand red), the word `IMURUN` and the version on the
+  left, the agent badge on the right. Under it a chrome row carries the
+  window dots, the active model and the working directory. The chrome row is
+  dropped first on narrow terminals, so the name and the agent always stay.
+- **The transcript** is the tall left column. Your messages are prefixed with
+  a red `❯`, the model's answers stream in below, and each tool call shows as
+  a row: an icon, the verb, the target, and the outcome at the far right.
 - **The side panel** is the right column. It appears only when the terminal is
   at least 96 columns wide and is 26 columns across; on narrower terminals it is
   hidden and the status line carries the essentials.
-- **The prompt box** sits under the transcript. Its top border is titled
-  `message`, and its bottom border shows a live caret position such as
-  `Ln 2, Col 5`. The box grows with your draft.
+- **The prompt box** sits under the transcript. It is **strict**: always the
+  same height, from the first frame to the last. A long draft scrolls inside
+  it instead of pushing the frame around, and nothing else on screen can
+  change its size. Its top border is titled `message`, its bottom border shows
+  a live caret position such as `Ln 2, Col 5`.
 - **The footer** under the prompt box is a single line of hints, described
   below.
+
+### The thinking block
+
+The model's thinking is collapsed by default and shows **only its label** —
+`thinking · 12s — click to expand`. The reasoning itself never appears until
+you click the line open, so a fast stream can never push half-thoughts
+through the transcript. Click it again to fold it away.
+
+### The model boot card
+
+When a local engine cold-starts, a card appears above the prompt box:
+
+```
+╭─ ● starting your model ─────────────────────────╮
+│  ⠸  qwen2.5-coder-7b                             │
+│     ██████████████░░░░░░  47%  ·  warming the cache │
+╰──────────────────────────────────────────────────╯
+```
+
+It names the model, fills a bar, and says what stage the load has reached. It
+vanishes the moment the runtime answers, and it never appears for a warm
+engine — there is nothing to wait for.
+
+### The approve card
+
+When the agent asks before touching something, the question is a card, not a
+line on the status bar:
+
+```
+╭─ ◆ approve ─────────────────────────────────────╮
+│ edit src/auth.ts                                 │
+│ IMURUN is asking before it touches anything.     │
+│ y approve  ·  n deny  ·  a always  ·  d never    │
+╰──────────────────────────────────────────────────╯
+```
 
 ### What the side panel shows
 
@@ -76,8 +120,8 @@ Todo glyphs are `☐` open, `◐` in progress, `☑` done.
 
 | Name | For |
 | --- | --- |
-| `imurun-dark` | The default, drawn for a dark terminal. |
-| `imurun-light` | Light terminals: the same hues, taken down in brightness. |
+| `imurun-dark` | The default, drawn for a dark terminal: warm ivory text, muted sand accents, a single brick red for the brand, and quiet hairline rules. |
+| `imurun-light` | Light terminals: the same page under daylight — ink on warm paper, with the brand red kept as the one loud colour. |
 | `none` | No color at all — for logs, pipes, and terminals that mangle escapes. |
 
 An unknown name falls back to `imurun-dark` and says so, rather than leaving the
@@ -103,7 +147,8 @@ any subagent, skill chip, or queue indicator, ending with `esc interrupts`.
 - `Up` / `Down` move the caret within a multi-line draft. On a single-line draft
   they walk your input history; with an empty prompt they scroll the transcript.
 - `Tab` completes slash commands and mentions.
-- The prompt grows up to a few rows as you type, then scrolls internally.
+- The prompt box has a fixed height. A long draft scrolls inside it, so the
+  frame around it never moves.
 
 ## Keyboard reference
 

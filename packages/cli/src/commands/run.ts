@@ -12,6 +12,7 @@ import {
   MemoryStore,
   PermissionManager,
   ProviderRegistry,
+  ResearchEngine,
   SessionStore,
   ToolRegistry,
   defaultAgent,
@@ -152,6 +153,10 @@ export const runCommand: Command = {
       config,
       memory: new MemoryStore(),
       skills: await loadSkills({ workingDir }),
+      // The research engine decides whether this question needs the internet,
+      // and gathers the evidence before the model answers. Without it, the
+      // model has to remember to search — which small models do not.
+      research: await ResearchEngine.create({ config: config.web }).catch(() => undefined),
       onPermission: async (request) => {
         if (autoApprove) return true
         if (quiet) return false

@@ -1051,6 +1051,9 @@ describe("what the agent brings into a turn", () => {
       permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
       config: h.config,
       memory: new MemoryStore(),
+      // No stray memory for this turn: the test is about which cards are
+      // pinned, and a random recall would make it fail one time in six.
+      random: () => 1,
     })
     const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
     await agent.run({ sessionId: session.id, input: "what should we do next?", workingDir: h.workingDir })
@@ -1088,18 +1091,13 @@ describe("what the agent brings into a turn", () => {
       permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
       config: h.config,
       memory: new MemoryStore(),
+      // Deterministic: the coin lands on "surface it".
+      random: () => 0,
     })
     const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
     const { events, onEvent } = collectingEvents()
 
-    // Deterministic: the first candidate, and the coin lands on "surface it".
-    const original = Math.random
-    Math.random = () => 0
-    try {
-      await agent.run({ sessionId: session.id, input: "fix the parser", workingDir: h.workingDir, onEvent })
-    } finally {
-      Math.random = original
-    }
+    await agent.run({ sessionId: session.id, input: "fix the parser", workingDir: h.workingDir, onEvent })
 
     const chips = events.filter(
       (event) => event.type === "notice" && /\brecalled\b/.test((event as { text: string }).text),

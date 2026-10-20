@@ -1,7 +1,7 @@
 # IMURUN documentation
 
 This is the documentation index for IMURUN, a local-first AI coding agent for the
-terminal. It is written for version **0.1.0** and describes only behaviour that
+terminal. It is written for version **0.1.1** and describes only behaviour that
 exists in this repository today.
 
 **What this covers:** what IMURUN is, how the documentation is organised, which
@@ -21,7 +21,7 @@ source. You can add an online provider if you want one, but local is the default
 - Publisher: ImuTechz
 - Author: Shubham Mallick (<dev@imutechz.in>)
 - License: MIT © 2026 ImuTechz
-- Version documented here: 0.1.0
+- Version documented here: 0.1.1
 
 ## Which guide to read
 
@@ -42,11 +42,12 @@ source. You can add an online provider if you want one, but local is the default
 | [Tools](tools.md) | See every tool, its arguments, and its limits. |
 | [Memory](memory.md) | Understand durable notes, session digests, and the progress ledger. |
 | [RAG](rag.md) | Understand the offline project index behind `code_search`. |
+| [Engines](engines.md) | Understand the learned decisions: research, notes, skills. |
 | [Permissions](permissions.md) | Control what runs without asking. |
 
 ## The numbers in this documentation
 
-These counts were read directly from the source at version 0.1.0.
+These counts were read directly from the source at version 0.1.1.
 
 | Thing | Count | Where it is defined |
 | --- | --- | --- |

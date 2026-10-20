@@ -465,6 +465,21 @@ export function unsupportedClaims(answer: string, bundle: ResearchBundle): Claim
   for (const claim of extractClaims(answer)) {
     const coverage = claimCoverage(claim, bundle)
     const numbers = claim.match(/\b\d+(?:\.\d+)*\b/g) ?? []
+    // A number that appears nowhere in the evidence is a number nobody
+    // supports — even when the rest of the sentence matches well. Versions,
+    // dates and prices are exactly what a model gets wrong, so they are
+    // checked on their own rather than by overall similarity.
+    const unsupportedNumbers = numbers.filter(
+      (number) => !bundle.passages.some((passage) => passage.text.includes(number)),
+    )
+    if (unsupportedNumbers.length > 0) {
+      claims.push({
+        text: claim,
+        coverage,
+        reason: `the sources do not mention ${unsupportedNumbers.slice(0, 3).join(", ")}`,
+      })
+      continue
+    }
     const numericSupport = numbers.length === 0 || numbers.some((number) => bundle.passages.some((passage) => passage.text.includes(number)))
     if (coverage >= 0.55 || (coverage >= 0.35 && numericSupport)) continue
     claims.push({

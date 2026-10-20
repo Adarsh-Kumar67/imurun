@@ -45,6 +45,7 @@ import {
   providerModelOptions,
   refreshRagIndex,
   removeGlobalConfigEntry,
+  ResearchEngine,
   restrictToolRegistry,
   subagents,
   supportsReasoningEffort,
@@ -274,6 +275,8 @@ export class TuiApp {
   skills: SkillDefinition[] = []
   session!: Session
   modelRef?: string
+  /** The research engine, built once and reused across turns. */
+  private research?: ResearchEngine
 
   // ── rendering state ──
   private screen?: Screen
@@ -1324,6 +1327,20 @@ export class TuiApp {
           this.ragSources = event.hits
           this.scheduleRender()
           break
+        case "research":
+          // The web search that ran before the answer. The sources are named
+          // in the transcript, so a cited fact can be traced back to a page.
+          this.pushNotice(
+            `researched ${event.sources.length} source${event.sources.length === 1 ? "" : "s"} \u00b7 ${event.queries.join(" \u00b7 ")}`,
+            "info",
+          )
+          break
+        case "research-claim":
+          this.pushNotice(
+            `checking ${event.claims.length} claim${event.claims.length === 1 ? "" : "s"} against the sources`,
+            "warn",
+          )
+          break
         case "tool-unrecognised":
           this.pushNotice(
             `the model asked for a tool that is not available \u2014 ${event.detail}`,
@@ -1433,6 +1450,7 @@ export class TuiApp {
         config: this.config,
         memory: this.memory,
         skills: this.skills,
+        research: await this.researchEngine(),
         onPermission: (request, toolName) => this.handlePermission(request, toolName),
       })
       const result = await agent.run({
@@ -1676,6 +1694,26 @@ export class TuiApp {
     }
 
     return true
+  }
+
+  /**
+   * The research engine, built once. It is what decides whether a question is
+   * about the world or about this codebase — before the model answers, not
+   * after it guesses. A failure to build it is not fatal: the model can still
+   * call `web_search` itself.
+   */
+  private async researchEngine(): Promise<ResearchEngine | undefined> {
+    if (this.research) return this.research
+    if (this.config.web.research === "off") return undefined
+    try {
+      this.research = await ResearchEngine.create({ config: this.config.web })
+      return this.research
+    } catch (error) {
+      // A research engine that cannot be built is not fatal: the model can
+      // still call web_search itself.
+      this.pushNotice(`the research engine is unavailable: ${(error as Error).message}`, "warn")
+      return undefined
+    }
   }
 
   /** Loads the model as soon as the UI opens, without blocking input. */

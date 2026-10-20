@@ -12,7 +12,7 @@ ships with it.
 - Website: <https://imutechz.in>
 - Documentation: [`docs/`](docs/README.md)
 - Publisher: ImuTechz · Author: Shubham Mallick (<dev@imutechz.in>)
-- Version: **0.1.0** · License: MIT © 2026 ImuTechz
+- Version: **0.1.1** · License: MIT © 2026 ImuTechz
 
 ```
 ┌──────────────────────────────────────────────┬──────────────────────┐
