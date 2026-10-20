@@ -144,6 +144,8 @@ export const runCommand: Command = {
 
     const started = Date.now()
     let wroteText = false
+    /** When the current thinking block started, for the live counter. */
+    let thinkingSince: number | undefined
 
     const agent = new Agent({
       sessions,
@@ -197,8 +199,21 @@ export const runCommand: Command = {
           break
         case "reasoning":
           // Thinking is not the answer, so it goes to stderr as a quiet hint —
-          // piped output stays clean.
-          if (!quiet) process.stderr.write(chalk.gray(event.delta))
+          // piped output stays clean. The counter ticks in place with a
+          // carriage return, so the line grows no new lines while it thinks.
+          if (!quiet) {
+            if (!thinkingSince) thinkingSince = Date.now()
+            const seconds = Math.floor((Date.now() - thinkingSince) / 1000)
+            const clock = `${String(seconds).padStart(2, "0")}s`
+            process.stderr.write(`\r  ${chalk.gray("◈")} ${chalk.gray(`thinking · ${clock}`)}   `)
+          }
+          break
+        case "step-start":
+          // A new step: end the thinking line so the next one starts clean.
+          if (!quiet && thinkingSince) {
+            thinkingSince = undefined
+            process.stderr.write("\r[2K")
+          }
           break
         case "notice":
           if (!quiet) {
@@ -232,6 +247,12 @@ export const runCommand: Command = {
           }
           break
         case "done":
+          // The thinking line is finished; clear it so the answer starts on
+          // a clean line.
+          if (!quiet && thinkingSince) {
+            thinkingSince = undefined
+            process.stderr.write("\r\u001b[2K")
+          }
           usage.inputTokens = event.usage.inputTokens
           usage.outputTokens = event.usage.outputTokens
           break

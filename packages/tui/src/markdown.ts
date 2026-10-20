@@ -15,6 +15,7 @@
  */
 import chalk from "chalk"
 import { theme } from "./theme"
+import { hyperlink } from "./hyperlink"
 
 export interface MarkdownPalette {
   heading: (text: string) => string
@@ -61,6 +62,8 @@ export interface MarkdownOptions {
 interface Segment {
   text: string
   style?: keyof MarkdownPalette
+  /** The URL this segment points at, when it is a link. */
+  link?: string
 }
 
 const DEFAULT_MAX_CODE_LINES = 60
@@ -97,6 +100,9 @@ const INLINE: Array<{ re: RegExp; style: keyof MarkdownPalette }> = [
   { re: /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/, style: "link" },
 ]
 
+/** A bare URL in the text, which is worth making clickable. */
+const BARE_URL = /https?:\/\/[^\s<>()[\]"'`]+[^\s<>()[\]"'`.,;:!?]/
+
 /** Splits a line of markdown into styled segments. */
 export function inlineSegments(text: string): Segment[] {
   const segments: Segment[] = []
@@ -104,7 +110,7 @@ export function inlineSegments(text: string): Segment[] {
 
   while (index < text.length) {
     const rest = text.slice(index)
-    let best: { at: number; raw: string; display: string; style: keyof MarkdownPalette } | undefined
+    let best: { at: number; raw: string; display: string; style: keyof MarkdownPalette; link?: string } | undefined
 
     for (const pattern of INLINE) {
       const match = pattern.re.exec(rest)
@@ -112,11 +118,19 @@ export function inlineSegments(text: string): Segment[] {
       if (best && match.index >= best.at) continue
 
       let display = match[1] ?? match[0]
+      let link: string | undefined
       if (pattern.style === "link") {
         const url = match[2] ?? ""
         if (url && display !== url && !display.includes("http")) display = `${display} (${url})`
+        if (/^https?:\/\//i.test(url)) link = url
       }
-      best = { at: match.index, raw: match[0], display, style: pattern.style }
+      best = { at: match.index, raw: match[0], display, style: pattern.style, link }
+    }
+
+    // A bare URL is a link too — models write them without markdown.
+    const bare = BARE_URL.exec(rest)
+    if (bare && (!best || bare.index < best.at)) {
+      best = { at: bare.index, raw: bare[0], display: bare[0], style: "link", link: bare[0] }
     }
 
     if (!best) {
@@ -124,7 +138,7 @@ export function inlineSegments(text: string): Segment[] {
       break
     }
     if (best.at > 0) segments.push({ text: rest.slice(0, best.at) })
-    segments.push({ text: best.display, style: best.style })
+    segments.push({ text: best.display, style: best.style, link: best.link })
     index += best.at + best.raw.length
   }
 
@@ -136,15 +150,17 @@ function mergeSegments(segments: Segment[]): Segment[] {
   for (const segment of segments) {
     if (segment.text === "") continue
     const last = out[out.length - 1]
-    if (last && last.style === segment.style) last.text += segment.text
+    if (last && last.style === segment.style && last.link === segment.link) last.text += segment.text
     else out.push({ ...segment })
   }
   return out
 }
 
 function painted(segment: Segment, palette: MarkdownPalette): string {
-  if (!segment.style) return segment.text
-  return palette[segment.style](segment.text)
+  const styled = segment.style ? palette[segment.style](segment.text) : segment.text
+  // The link escape wraps the styled text, so the colour survives and the
+  // URL is still clickable.
+  return segment.link ? hyperlink(segment.link, styled) : styled
 }
 
 function paintLine(segments: Segment[], palette: MarkdownPalette): string {
@@ -166,7 +182,9 @@ export function wrapSegments(segments: Segment[], width: number): Segment[][] {
   const append = (segment: Segment): void => {
     if (segment.text === "") return
     const last = line[line.length - 1]
-    if (last && last.style === segment.style) last.text += segment.text
+    // A link is only merged into a neighbour when it points at the same URL:
+    // two different links side by side must stay two links.
+    if (last && last.style === segment.style && last.link === segment.link) last.text += segment.text
     else line.push(segment)
     length += segment.text.length
   }
@@ -177,26 +195,33 @@ export function wrapSegments(segments: Segment[], width: number): Segment[][] {
   }
 
   for (const segment of segments) {
-    for (const part of segment.text.split(/(\s+)/)) {
-      if (part === "") continue
-      if (part.trim() === "") {
-        if (length + part.length <= max) append({ text: part, style: segment.style })
+    // Every part of a segment keeps the segment's link, so a URL split across
+    // a line break is still one clickable link.
+    const part = (text: string): Segment => ({
+      text,
+      style: segment.style,
+      link: segment.link,
+    })
+    for (const piece of segment.text.split(/(\s+)/)) {
+      if (piece === "") continue
+      if (piece.trim() === "") {
+        if (length + piece.length <= max) append(part(piece))
         else breakLine()
         continue
       }
-      if (length + part.length <= max) {
-        append({ text: part, style: segment.style })
+      if (length + piece.length <= max) {
+        append(part(piece))
         continue
       }
       if (length > 0) breakLine()
 
-      let word = part
+      let word = piece
       while (word.length > max) {
-        append({ text: word.slice(0, max), style: segment.style })
+        append(part(word.slice(0, max)))
         breakLine()
         word = word.slice(max)
       }
-      if (word !== "") append({ text: word, style: segment.style })
+      if (word !== "") append(part(word))
     }
   }
 

@@ -97,12 +97,13 @@ import { Palette, type PaletteItem } from "./palette"
 import { buildPromptBox, caretPosition } from "./prompt"
 import { estimateToolMs, progressBar, progressFraction, progressPhrase, progressWords } from "./progress"
 import { MessageQueue, formatQueue } from "./queue"
-import { composeFrame, reasoningRanges, renderTranscript, type Block, type Tone } from "./render"
+import { composeFrame, categoryForTool, reasoningRanges, renderTranscript, type Block, type Tone } from "./render"
+import { PromptLedger, promptLedgerPath } from "@imurun/core"
 import { Screen } from "./screen"
 import { sidebarLines, tailPath, type SidebarState, type SidebarTodo } from "./sidebar"
 import { parseSlash, type ParsedSlash, type SlashRegistry } from "./slash"
 import { clampVisible, firstLine, fitVisible, padVisible, visibleWidth, wrapText } from "./text"
-import { sym, setTheme, theme } from "./theme"
+import { sym, setTheme, theme, gradient, TITLE_GRADIENT_FROM, TITLE_GRADIENT_TO } from "./theme"
 
 export { fitInput } from "./text"
 
@@ -231,7 +232,10 @@ function displayPath(path: string): string {
 function band(left: string, right: string, width: number): string {
   const gap = Math.max(width - visibleWidth(left) - visibleWidth(right) - 1, 1)
   const line = clampVisible(left + " ".repeat(gap) + right, width)
-  return theme.bar(padVisible(line, width))
+  // A gradient across the band, so the top of the window has depth rather
+  // than being a flat strip of colour.
+  const painted = gradient(line, TITLE_GRADIENT_FROM, TITLE_GRADIENT_TO)
+  return theme.bar(padVisible(painted, width))
 }
 
 /**
@@ -730,8 +734,26 @@ export class TuiApp {
     this.render()
   }
 
-  private handleChatKey(key: KeyEvent): void {
-    // control keys
+  /**
+   * Hands the mouse back to the terminal so the user can select and copy.
+   *
+   * While the terminal reports the mouse to the program, a drag selects
+   * nothing — the events go to IMURUN instead of to the clipboard. Turning
+   * reporting off gives the ordinary behaviour back without leaving the
+   * interface; pressing the key again takes the mouse back.
+   */
+  toggleSelectionMode(): void {
+    const enabled = !this.screen?.mouseEnabled
+    this.screen?.setMouseEnabled(enabled ?? false)
+    this.pushNotice(
+      enabled
+        ? "the mouse is yours \u2014 drag to select and copy \u00b7 ctrl+s takes it back"
+        : "the mouse is IMURUN's again",
+      "info",
+    )
+  }
+
+  private handleChatKey(key: KeyEvent): void {    // control keys
     if (key.ctrl) {
       switch (key.input) {
         case "c":
@@ -742,6 +764,12 @@ export class TuiApp {
           return
         case "l":
           this.clearScreen()
+          return
+        case "s":
+          // Release the mouse so the text can be selected and copied the
+          // ordinary way. The interface keeps running; only the mouse goes
+          // back to the terminal.
+          this.toggleSelectionMode()
           return
         case "u":
           this.input = this.input.slice(0, this.inputCursor)
@@ -1377,6 +1405,9 @@ export class TuiApp {
         }
         case "tool-start": {
           this.finalizeStreaming()
+          // The block is coloured by what the agent is about to do, so the
+          // kind of thinking is visible before the block is even opened.
+          this.categoriseReasoning(event.name)
           // Thinking for this step is over once a tool runs — from here the
           // phase line speaks, not the model.
           this.closeReasoning()
@@ -1508,7 +1539,7 @@ export class TuiApp {
    */
   private appendReasoning(delta: string): void {
     if (!this.liveReasoning || !this.blocks[this.liveReasoning.index]) {
-      this.pushBlock({ kind: "reasoning", text: "", live: true })
+      this.pushBlock({ kind: "reasoning", text: "", live: true, startedAt: Date.now() })
       this.liveReasoning = { index: this.blocks.length - 1, startedAt: Date.now() }
     }
     const block = this.blocks[this.liveReasoning.index]
@@ -1530,6 +1561,22 @@ export class TuiApp {
       block.expanded = this.expandedReasoning.has(live.index)
     }
     this.transcriptVersion++
+  }
+
+  /**
+   * Colours the live thinking block by what the agent is actually doing: a
+   * web search is blue, a file scan amber, a command cyan, plain reasoning
+   * violet.
+   */
+  private categoriseReasoning(toolName: string): void {
+    const live = this.liveReasoning
+    if (!live) return
+    const block = this.blocks[live.index]
+    if (block?.kind === "reasoning") {
+      block.category = categoryForTool(toolName)
+      this.transcriptVersion++
+      this.scheduleRender()
+    }
   }
 
   /** A click on a thinking block toggles it; true when the click was on one. */
@@ -3775,6 +3822,47 @@ export class TuiApp {
   // ── Todos ─────────────────────────────────────────────────────────────────
 
   /** `/todo` — the plan the model and the user share, with tick marks. */
+  /**
+   * `/prompts` — every request made in this session, and where it stands.
+   *
+   * The ledger is a file in the project (`.imurun/prompts.md`), so it can be
+   * opened, edited and diffed like the plan and the todos.
+   */
+  async promptsCommand(args: string[]): Promise<void> {
+    const action = (args[0] ?? "").toLowerCase()
+    const ledger = await PromptLedger.load(this.workingDir)
+    const entries = ledger.all()
+
+    if (action === "open") {
+      this.print(`  ${theme.bold("Prompt ledger")}`)
+      this.print(`    ${theme.dim(promptLedgerPath(this.workingDir))}`)
+      this.print()
+      return
+    }
+
+    this.print()
+    if (entries.length === 0) {
+      this.print(theme.dim("  no prompts yet \u2014 every request you make is recorded here"))
+      this.print()
+      return
+    }
+    this.print(`  ${theme.bold("Prompts")} ${theme.dim(ledger.summary())}`)
+    for (const entry of entries) {
+      const mark =
+        entry.status === "done"
+          ? theme.ok(sym.ok)
+          : entry.status === "blocked"
+            ? theme.error(sym.fail)
+            : entry.status === "active"
+              ? theme.accent(sym.bullet)
+              : theme.warn(sym.queued)
+      const text = entry.status === "done" ? theme.dim(entry.title) : entry.title
+      const reason = entry.reason ? theme.dim(` \u2014 ${entry.reason}`) : ""
+      this.print(`  ${mark} ${theme.dim(entry.id)} ${text}${reason}`)
+    }
+    this.print()
+  }
+
   async todoCommand(args: string[]): Promise<void> {
     const [action = "", ...rest] = args
     const value = rest.join(" ").trim()

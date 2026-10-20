@@ -21,6 +21,8 @@ aliases.
 | `/setup` | `/wizard`, `/onboard` | Choose where models run: this machine or online. | `/setup` |
 | `/plan` | `/plans` | Show the written plan (goal, approach, steps) and update it. | `/plan [show \| new <goal> \| done <n> \| reopen <n> \| note <text> \| open \| clear]` |
 | `/todo` | `/todos` | Show or edit the plan the model is working through. | `/todo [list \| add <step> \| start <n> \| done <n> \| reopen <n> \| rm <n> \| clear-done]` |
+| `/prompts` | `/prompt`, `/ledger` | Every request made in this session, and whether it is done or still pending. | `/prompts [show \| open]` |
+| `/select` | `/selection` | Release the mouse so you can select and copy the text on screen. | `/select` |
 | `/clear` | — | Clear the screen. | `/clear` |
 | `/model` | — | Switch the model (opens a picker) or download more. | `/model [ref]` |
 | `/models` | — | List installed models and machine recommendations. | `/models` |
@@ -84,6 +86,26 @@ does. See [Permissions](permissions.md).
 `/todo` reads and edits `.imurun/todos.md`, the checklist shown in the side
 panel. Both survive restarts, so an interrupted run resumes from them. See
 [Tools](tools.md#plan) and [Tools](tools.md#todo).
+
+### `/prompts`
+
+The **prompt ledger** is `.imurun/prompts.md`: every request you have made in
+this session, and where it stands. A prompt is recorded when it is sent, and
+marked done when its turn finishes — or marked blocked, with the reason, when
+the turn ended in a failed tool call. `/prompts` lists them, and `/prompts
+open` prints the file's path so you can open or edit it yourself.
+
+The plan covers the steps of one piece of work; the ledger covers the
+*requests* across the whole session. Nothing you asked for is quietly
+forgotten: an unstarted prompt stays pending and visible until it is dealt
+with.
+
+### `/select`
+
+While the terminal reports the mouse to IMURUN, a drag selects nothing — the
+events go to the program instead of to the clipboard. `/select` (or `ctrl+s`)
+hands the mouse back so you can select and copy the ordinary way, without
+leaving the interface. Press the key again to take it back.
 
 ### `/rag`
 

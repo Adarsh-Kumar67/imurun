@@ -22,6 +22,7 @@ import { planTool } from "./plan"
 import { codeSearchTool } from "./rag"
 import { screenshotTool } from "./screenshot"
 import { webFetchTool, webSearchTool } from "./web"
+import { githubTool } from "./github"
 
 export class ToolRegistry {
   private tools = new Map<string, ImurunTool>()
@@ -74,6 +75,7 @@ export class ToolRegistry {
       .register(planTool)
       .register(webSearchTool)
       .register(webFetchTool)
+      .register(githubTool)
       .register(screenshotTool)
   }
 }

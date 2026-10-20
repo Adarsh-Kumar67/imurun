@@ -71,7 +71,9 @@ function githubHeaders(): Record<string, string> {
     accept: "application/vnd.github+json",
     "user-agent": "imurun",
   }
-  const token = process.env.GITHUB_TOKEN
+  // GITHUB_TOKEN first, then GH_TOKEN — the two names people actually use.
+  // The token goes into a header, never into a URL, and is never logged.
+  const token = process.env.GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim()
   if (token) headers.authorization = `Bearer ${token}`
   return headers
 }

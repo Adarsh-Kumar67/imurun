@@ -63,9 +63,35 @@ stream of tokens cannot make anything jump around.
 ### The thinking block
 
 The model's thinking is collapsed by default and shows **only its label** —
-`thinking · 12s — click to expand`. The reasoning itself never appears until
+`◈ thinking · 12s — click to expand`. The reasoning itself never appears until
 you click the line open, so a fast stream can never push half-thoughts
 through the transcript. Click it again to fold it away.
+
+The block is **coloured by what the agent is actually doing**, so the kind of
+thinking is visible before the block is opened:
+
+| Icon | Colour | Meaning |
+| --- | --- | --- |
+| `◈` | violet | The model is reasoning. |
+| `⌕` | blue | It is searching — the web, or GitHub. |
+| `◉` | amber | It is reading files. |
+| `⌘` | cyan | It is running a command. |
+| `▤` | green | It is planning. |
+
+The clock ticks while the block is live — `00s`, `01s`, `02s` — and freezes at
+the time it took when the block closes.
+
+### Copying and selecting
+
+While the terminal reports the mouse to IMURUN, a drag selects nothing: the
+events go to the program instead of to the clipboard. `ctrl+s` (or `/select`)
+hands the mouse back so you can select and copy the ordinary way, without
+leaving the interface; the same key takes it back. `/copy` copies the last
+answer to the clipboard directly.
+
+URLs in the transcript are **clickable**: they are written as OSC 8
+hyperlinks, so ctrl-click opens them in a terminal that supports it, and they
+read as plain text everywhere else.
 
 ### The model boot card
 
@@ -160,6 +186,7 @@ any subagent, skill chip, or queue indicator, ending with `esc interrupts`.
 | `PgUp` / `PgDn` | Scroll the transcript by eight lines. |
 | `Home` / `End` | Jump to the start or the newest line. |
 | `Shift+Tab` | Switch agent, cycling through the primary agents. |
+| `Ctrl+S` | Release the mouse so you can select and copy the text on screen. |
 | `Tab` | Complete a slash command or mention. |
 | `Esc` | Clear the draft when idle; interrupt a running turn when busy; jump back to the live end when reading back; step back inside wizards. |
 | `Ctrl+Z` | Take the last queued message back into the prompt. |

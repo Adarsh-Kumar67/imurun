@@ -18,6 +18,7 @@
 import { join } from "node:path"
 import { ensureDir, logger, writeFileAtomic } from "@imurun/util"
 import { BUILTIN_SKILLS, formatSkillMarkdown, parseSkillMarkdown, skillsDir } from "../agent/skills"
+import { githubHeaders } from "../github/client"
 import type { SkillDefinition } from "../agent/skills"
 
 export const DEFAULT_SKILL_SOURCE = "anthropics/skills"
@@ -172,11 +173,16 @@ export async function syncSkillPack(options: SkillSyncOptions = {}): Promise<Ski
 
   const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`
   status(`reading ${owner}/${repo} skill tree`)
-  const treeResponse = await doFetch(treeUrl, { headers: { accept: "application/vnd.github+json" } })
+  // The token raises the rate limit and reaches private packs. It is read
+  // from the environment and goes into a header — never into the URL.
+  const treeResponse = await doFetch(treeUrl, { headers: githubHeaders() })
   if (!treeResponse.ok) {
+    const limited = treeResponse.status === 403 || treeResponse.status === 429
     throw new Error(
       `Could not read ${owner}/${repo} (${treeResponse.status}). ` +
-        `Check the source name and your network connection.`,
+        (limited
+          ? `GitHub's rate limit may have been reached — set GITHUB_TOKEN for 5,000 requests an hour. `
+          : `Check the source name and your network connection. `),
     )
   }
   const tree = (await treeResponse.json()) as { tree?: TreeEntry[] }
@@ -184,7 +190,7 @@ export async function syncSkillPack(options: SkillSyncOptions = {}): Promise<Ski
 
   const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`
   const api = async (path: string): Promise<string | undefined> => {
-    const response = await doFetch(rawBase + path)
+    const response = await doFetch(rawBase + path, { headers: githubHeaders() })
     if (!response.ok) return undefined
     return response.text()
   }

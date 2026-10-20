@@ -90,6 +90,23 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "prompts",
+    aliases: ["prompt", "ledger"],
+    summary: "Every request made in this session, and whether it is done or still pending",
+    usage: "/prompts [show | open]",
+    run(app, args) {
+      return app.promptsCommand(args)
+    },
+  },
+  {
+    name: "select",
+    aliases: ["selection"],
+    summary: "Release the mouse so you can select and copy the text on screen",
+    run(app) {
+      app.toggleSelectionMode()
+    },
+  },
+  {
     name: "clear",
     summary: "Clear the screen",
     run(app) {

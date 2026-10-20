@@ -96,6 +96,42 @@ const NONE: Theme = (() => {
 /** The live theme. Every module reads this; `setTheme` rewrites it in place. */
 export const theme: Theme = { ...DARK }
 
+/**
+ * A horizontal gradient, painted across the characters of a line.
+ *
+ * A terminal cannot do glass, but it can do a gradient — and a band that
+ * fades from one colour to another reads as depth rather than as a flat bar.
+ * The ramp is interpolated in RGB and applied per character, so it works in
+ * truecolor terminals and degrades to a single colour where 24-bit colour is
+ * not available.
+ */
+export function gradient(text: string, from: string, to: string): string {
+  const start = hexToRgb(from)
+  const end = hexToRgb(to)
+  if (!start || !end) return text
+  const length = Math.max(text.length - 1, 1)
+  let out = ""
+  for (let index = 0; index < text.length; index++) {
+    const ratio = index / length
+    const r = Math.round(start.r + (end.r - start.r) * ratio)
+    const g = Math.round(start.g + (end.g - start.g) * ratio)
+    const b = Math.round(start.b + (end.b - start.b) * ratio)
+    out += chalk.rgb(r, g, b)(text[index]!)
+  }
+  return out
+}
+
+/** The gradient used for the title band: warm light into the brand red. */
+export const TITLE_GRADIENT_FROM = "#F4EFE5"
+export const TITLE_GRADIENT_TO = "#E5484D"
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | undefined {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!match) return undefined
+  const value = Number.parseInt(match[1]!, 16)
+  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 }
+}
+
 /** Theme names accepted in `config.tui.theme`. */
 export const THEME_NAMES = ["imurun-dark", "imurun-light", "none"] as const
 

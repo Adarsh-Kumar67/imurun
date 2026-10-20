@@ -2,8 +2,9 @@
  * The task tool — how work is handed to a subagent.
  *
  * The brief is structured on purpose: a subagent cannot see the conversation,
- * so the parts have to arrive in a predictable place, and several independent
- * briefs should run at the same time rather than in a queue.
+ * so the parts have to arrive in a predictable place. A batch runs one brief
+ * after another — each finished before the next starts — so two subagents are
+ * never editing the same tree at once. `parallel: true` opts out of that.
  */
 import { describe, expect, test } from "bun:test"
 import { createTaskTool, renderBrief, validateBrief } from "../src/tool/task"
@@ -143,10 +144,29 @@ describe("task tool", () => {
     expect(calls[0]!.prompt).toBe("Read tmp/run.log and summarise the errors.")
   })
 
-  test("a batch runs its briefs at the same time", async () => {
-    const { runner, calls, release } = recordingRunner("done")
+  test("a batch runs one brief after another, each finished before the next starts", async () => {
+    // A runner that records when each brief starts and ends, and how many
+    // are in flight at once.
+    const order: string[] = []
+    let inFlight = 0
+    let peak = 0
+    const runner: SubagentRunner = {
+      listAgents: () => [
+        { id: "build", name: "Build", mode: "primary", tools: [], disabledTools: [], prompt: "" } as never,
+        { id: "plan", name: "Plan", mode: "primary", tools: [], disabledTools: [], prompt: "" } as never,
+      ],
+      async run(request) {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        order.push(`start ${request.description}`)
+        await Bun.sleep(5)
+        order.push(`end ${request.description}`)
+        inFlight--
+        return { text: "done", agentId: request.agentId ?? "general", sessionId: "ses_child" }
+      },
+    }
     const tool = createTaskTool(runner)
-    const promise = tool.execute(
+    const result = await tool.execute(
       {
         action: "batch",
         tasks: [
@@ -158,8 +178,39 @@ describe("task tool", () => {
       context("plan"),
     )
 
-    // All three are in flight before any of them is allowed to finish: a queue
-    // would stall at one.
+    expect(result.ok).toBe(true)
+    expect(result.output).toContain("3 subagents finished one after another")
+    expect(result.output).toContain("## 1. compare library A")
+    expect(result.output).toContain("## 3. compare library C")
+    // Never more than one at a time, and always in order.
+    expect(peak).toBe(1)
+    expect(order).toEqual([
+      "start task 1/3",
+      "end task 1/3",
+      "start task 2/3",
+      "end task 2/3",
+      "start task 3/3",
+      "end task 3/3",
+    ])
+  })
+
+  test("parallel=true runs the briefs at the same time", async () => {
+    const { runner, calls, release } = recordingRunner("done")
+    const tool = createTaskTool(runner)
+    const promise = tool.execute(
+      {
+        action: "batch",
+        parallel: "true",
+        tasks: [
+          { aim: "compare library A against the current one" },
+          { aim: "compare library B against the current one" },
+          { aim: "compare library C against the current one" },
+        ],
+      },
+      context("plan"),
+    )
+
+    // All three are in flight before any of them is allowed to finish.
     await Bun.sleep(5)
     expect(calls).toHaveLength(3)
     release()
@@ -167,12 +218,6 @@ describe("task tool", () => {
 
     expect(result.ok).toBe(true)
     expect(result.output).toContain("3 subagents finished in parallel")
-    expect(result.output).toContain("## 1. compare library A")
-    expect(result.output).toContain("## 3. compare library C")
-    expect(calls.every((call) => call.agentId === "plan")).toBe(true)
-    expect(new Set(calls.map((call) => call.description))).toEqual(
-      new Set(["task 1/3", "task 2/3", "task 3/3"]),
-    )
   })
 
   test("a batch with an unusable brief is refused before anything runs", async () => {

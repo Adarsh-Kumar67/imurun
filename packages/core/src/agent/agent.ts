@@ -44,6 +44,7 @@ import { formatRagHit } from "../rag/index"
 import { modelSeesImages } from "./vision"
 import { selectSkills, skillsToPromptSection } from "./skills"
 import { skillRouterFor } from "./skill-router"
+import { PromptLedger } from "./prompt-ledger"
 import type { SkillDefinition } from "./skills"
 import {
   MAX_RESEARCH_VERIFICATIONS,
@@ -323,6 +324,13 @@ export class Agent {
     if (!session) throw new Error(`Session not found: ${run.sessionId}`)
 
     sessions.addMessage({ sessionId: session.id, role: "user", content: run.input })
+
+    // The prompt ledger: every request of the session, and where it stands.
+    // A prompt is recorded when it is sent and marked done when its turn
+    // finishes, so nothing the user asked for is quietly forgotten.
+    const ledger = await PromptLedger.load(run.workingDir).catch(() => undefined)
+    const promptText = typeof run.input === "string" ? run.input : promptQuery(run.input)
+    const promptEntry = ledger?.add(promptText)
 
     const resolved: ResolvedModel = providers.resolve(run.model ?? session.model ?? config.model)
     if (!session.model) sessions.update(session.id, { model: resolved.modelId })
@@ -1128,6 +1136,22 @@ export class Agent {
 
     const done: AgentEvent = { type: "done", steps, usage: totalUsage }
     run.onEvent?.(done)
+
+    // The prompt is dealt with: mark it in the ledger, and say so.
+    if (ledger && promptEntry) {
+      const finished = toolFailures > 0 || !finalText.trim()
+      if (finished) {
+        ledger.block(promptEntry.id, toolFailures > 0 ? "the turn ended with failed tool calls" : "no answer was produced")
+      } else {
+        ledger.complete(promptEntry.id)
+      }
+      await ledger.save().catch(() => {})
+      run.onEvent?.({
+        type: "notice",
+        text: `prompt ${promptEntry.id} \u00b7 ${ledger.summary()}`,
+        tone: finished ? "warn" : "info",
+      })
+    }
 
     return {
       text: finalText,

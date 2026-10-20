@@ -26,6 +26,7 @@ The base registry registers 14 tools; the interactive UI registers a 15th,
 | `plan` | Write `.imurun/PLAN.md`. | No |
 | `web_search` | Search the internet. | No |
 | `web_fetch` | Download and read a web page. | No |
+| `github` | Read a repository, its issues, its releases, a file, or a user. | No |
 | `screenshot` | Capture the screen so the model can look at it. | No |
 | `task` | Delegate to a subagent. | No |
 
@@ -311,6 +312,40 @@ offline through `code_search` — one request, then no network. It is off by def
 because it puts files in your project.
 
 See [Configuration](configuration.md#web).
+
+## github
+
+Read GitHub without leaving the terminal: a repository's details, its issues,
+its releases, a file's contents, a user's profile, or a repository search.
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `action` | string (required) | `repo`, `issues`, `release`, `file`, `user` or `search`. |
+| `repo` | string | The repository as `owner/name` or a GitHub URL. Not needed for `action=user`. |
+| `path` | string | The file to read, for `action=file`. |
+| `ref` | string | The branch, tag or commit, for `action=file`. Defaults to the default branch. |
+| `number` | number | The issue number, to read one issue. |
+| `state` | string | `open`, `closed` or `all`, for `action=issues`. Defaults to `open`. |
+| `query` | string | The search text, for `action=search`. |
+| `limit` | number | How many items to return (max 30). |
+
+**The token.** GitHub allows 60 requests an hour without a token and 5,000
+with one, so the tool works either way. When a token is present it is read
+from `GITHUB_TOKEN`, then `GH_TOKEN`, and sent in the `Authorization` header.
+It is never written to a file, never printed, and never put in a URL — a
+failed request says what went wrong without quoting the token. A private
+repository needs one:
+
+```bash
+# Windows PowerShell
+$env:GITHUB_TOKEN = "ghp_..."
+
+# macOS / Linux
+export GITHUB_TOKEN="ghp_..."
+```
+
+The same token raises the limit for skill-pack downloads and for the engine
+release lookup, so one variable covers all of it.
 
 ## screenshot
 

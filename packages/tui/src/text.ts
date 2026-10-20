@@ -3,10 +3,22 @@
  * without a terminal.
  */
 
+/**
+ * The ANSI SGR sequences (colours, bold, …).
+ */
 const ANSI_RE = /\x1b\[[0-9;]*m/g
 
+/**
+ * The OSC 8 hyperlink sequences.
+ *
+ * They carry no visible characters, so the width maths has to ignore them —
+ * otherwise every link would make its line look longer than it is, and the
+ * frame would drift.
+ */
+const OSC8_RE = /\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/g
+
 export function stripAnsi(text: string): string {
-  return text.replace(ANSI_RE, "")
+  return text.replace(OSC8_RE, "").replace(ANSI_RE, "")
 }
 
 /** Width of a line in visible characters (ANSI sequences don't count). */
@@ -57,6 +69,14 @@ export function clampVisible(text: string, max: number): string {
       if (match) {
         out += match[0]
         i += match[0].length
+        continue
+      }
+      // A hyperlink escape is invisible but must be carried through whole:
+      // splitting one in half would leave the terminal in link mode.
+      const link = /^\u001b\]8;;[^\u0007\u001b]*(?:\u0007|\u001b\\)/.exec(text.slice(i))
+      if (link) {
+        out += link[0]
+        i += link[0].length
         continue
       }
     }

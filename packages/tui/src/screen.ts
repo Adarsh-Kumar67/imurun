@@ -22,9 +22,13 @@ const CLEAR = "\u001b[2J"
 const HOME = "\u001b[H"
 const MOUSE_ON = "\u001b[?1000h\u001b[?1006h"
 const MOUSE_OFF = "\u001b[?1006l\u001b[?1000l"
+/** Bracketed paste, so a multi-line paste is not read as keystrokes. */
+const BRACKETED_PASTE_ON = "\u001b[?2004h"
+const BRACKETED_PASTE_OFF = "\u001b[?2004l"
 
 export class Screen {
   private active = false
+  private mouseActive = false
   private readonly dataHandlers = new Set<(chunk: string) => void>()
   private readonly resizeHandlers = new Set<(size: ScreenSize) => void>()
   private readonly handleData = (chunk: Buffer | string): void => {
@@ -55,15 +59,36 @@ export class Screen {
     this.input.resume?.()
     this.output.on("resize", this.handleResize)
     // Mouse reporting: 1000 = clicks, 1006 = SGR coordinates (also the wheel).
-    // Held for the whole session so the prompt box is clickable; the terminal
-    // gives up native text selection while it is on (hold shift to select).
-    this.output.write(ALT_SCREEN_ON + CURSOR_HIDE + CLEAR + HOME + MOUSE_ON)
+    // Held for the whole session so the prompt box is clickable.
+    this.output.write(ALT_SCREEN_ON + CURSOR_HIDE + CLEAR + HOME + BRACKETED_PASTE_ON + MOUSE_ON)
+    this.mouseActive = true
+  }
+
+  /**
+   * Turns mouse reporting off without leaving the screen.
+   *
+   * While the terminal is reporting the mouse, a drag selects nothing — the
+   * terminal sends the events to the program instead of to the user. This
+   * releases the mouse so the text can be selected and copied the ordinary
+   * way, without leaving the interface. The program keeps running; only the
+   * mouse is handed back.
+   */
+  setMouseEnabled(enabled: boolean): void {
+    if (!this.active || this.mouseActive === enabled) return
+    this.mouseActive = enabled
+    this.output.write(enabled ? MOUSE_ON : MOUSE_OFF)
+  }
+
+  /** True while the terminal is reporting the mouse to the program. */
+  get mouseEnabled(): boolean {
+    return this.mouseActive
   }
 
   stop(): void {
     if (!this.active) return
     this.active = false
-    this.output.write(MOUSE_OFF + CURSOR_SHOW + ALT_SCREEN_OFF)
+    this.output.write(MOUSE_OFF + BRACKETED_PASTE_OFF + CURSOR_SHOW + ALT_SCREEN_OFF)
+    this.mouseActive = false
     this.input.off("data", this.handleData)
     this.output.off("resize", this.handleResize)
     if (this.input.isTTY && typeof this.input.setRawMode === "function") {

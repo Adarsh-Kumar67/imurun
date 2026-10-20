@@ -24,6 +24,7 @@ import { ensureDir, imurunDir, logger, readJson, sha256, writeJsonAtomic } from 
 import { tokenize } from "../memory/search"
 import { isIgnoredPath } from "../tool/glob"
 import { isExcludedPath } from "./globs"
+import { walkFiles } from "./walk"
 
 /** Bump when the snapshot shape changes so old snapshots are ignored. */
 const RAG_VERSION = 1
@@ -492,23 +493,24 @@ export class RagIndex {
 
   private async scan(): Promise<Map<string, { mtimeMs: number; size: number }>> {
     const out = new Map<string, { mtimeMs: number; size: number }>()
-    const glob = new Bun.Glob("**/*")
-    const candidates: string[] = []
 
-    try {
-      for await (const file of glob.scan({ cwd: this.root, onlyFiles: true, dot: false })) {
-        const normalized = file.replace(/\\/g, "/")
-        if (isExcludedPath(normalized, this.excludeGlobs)) continue
-        if (isIndexableFile(normalized)) candidates.push(normalized)
-      }
-    } catch (error) {
-      logger.warn(`rag: could not scan ${this.root}: ${(error as Error).message}`)
-      return out
+    // The walk never throws: a directory the process may not read (AppData on
+    // Windows, /proc on Linux) is skipped rather than ending the scan.
+    const walk = await walkFiles({
+      root: this.root,
+      maxFiles: this.maxFiles,
+      maxFileBytes: this.maxFileBytes,
+      accept: (relative) => {
+        if (isExcludedPath(relative, this.excludeGlobs)) return false
+        return isIndexableFile(relative)
+      },
+    })
+    if (walk.skipped.length > 0) {
+      logger.debug(`rag: skipped ${walk.skipped.length} unreadable directory(ies) under ${this.root}`)
     }
 
     // Deterministic order, so the file cap always keeps the same files.
-    candidates.sort()
-    for (const rel of candidates) {
+    for (const rel of walk.files) {
       if (out.size >= this.maxFiles) break
       try {
         const info = await stat(resolve(this.root, rel))

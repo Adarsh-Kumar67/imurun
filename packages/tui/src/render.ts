@@ -5,12 +5,52 @@
  * the framing logic can be unit tested without a terminal.
  */
 import { theme, sym } from "./theme"
+import chalk from "chalk"
 import { clampVisible, padVisible, visibleWidth, wrapText } from "./text"
 import { spinnerFrame } from "./animate"
 import { DEFAULT_MARKDOWN_PALETTE, highlightCode, renderMarkdown } from "./markdown"
 import { progressBar, progressFraction, progressPhrase } from "./progress"
 
 export type Tone = "info" | "ok" | "warn" | "error"
+
+/**
+ * What kind of thinking a block holds.
+ *
+ * The colour and the icon say what the model is doing without opening the
+ * block: a search is blue, a file scan is amber, plain reasoning is violet.
+ */
+export type ThinkingCategory = "reasoning" | "search" | "files" | "shell" | "plan"
+
+export interface ThinkingStyle {
+  icon: string
+  color: (text: string) => string
+  label: string
+}
+
+const THINKING_STYLES: Record<ThinkingCategory, ThinkingStyle> = {
+  reasoning: { icon: "◈", color: (text) => chalk.hex("#A78BFA")(text), label: "thinking" },
+  search: { icon: "⌕", color: (text) => chalk.hex("#60A5FA")(text), label: "searching" },
+  files: { icon: "◉", color: (text) => chalk.hex("#E0A458")(text), label: "reading" },
+  shell: { icon: "⌘", color: (text) => chalk.hex("#38BDF8")(text), label: "running" },
+  plan: { icon: "▤", color: (text) => chalk.hex("#34D399")(text), label: "planning" },
+}
+
+/** The style for a category, falling back to plain reasoning. */
+export function thinkingStyle(category: ThinkingCategory | undefined): ThinkingStyle {
+  return THINKING_STYLES[category ?? "reasoning"] ?? THINKING_STYLES.reasoning!
+}
+
+/**
+ * The category a tool call implies. The block is coloured by what the agent
+ * is actually doing, not by what it is thinking about.
+ */
+export function categoryForTool(name: string): ThinkingCategory {
+  if (name === "web_search" || name === "web_fetch" || name === "github") return "search"
+  if (name === "read" || name === "glob" || name === "grep" || name === "code_search") return "files"
+  if (name === "shell") return "shell"
+  if (name === "plan" || name === "todo" || name === "progress") return "plan"
+  return "reasoning"
+}
 
 export type Block =
   /** `state` marks a message that is queued ("pending") or taken back ("undone"). */
@@ -20,7 +60,17 @@ export type Block =
    * The model's thinking. Collapsed by default to one line ("thinking · 12s");
    * a click (or /thinking) expands it in place while it keeps streaming.
    */
-  | { kind: "reasoning"; text: string; expanded?: boolean; seconds?: number; live?: boolean }
+  | {
+      kind: "reasoning"
+      text: string
+      expanded?: boolean
+      seconds?: number
+      live?: boolean
+      /** When the block started, so the timer can tick while it streams. */
+      startedAt?: number
+      /** What kind of thinking this is, which decides its colour and icon. */
+      category?: ThinkingCategory
+    }
   | {
       kind: "tool"
       title: string
@@ -119,10 +169,18 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
     }
 
     case "reasoning": {
-      const seconds = block.seconds ?? 0
-      const label = `thinking \u00b7 ${seconds}s`
+      const now = options.now ?? Date.now()
+      // While the block is live the timer ticks; when it closes, the elapsed
+      // time is frozen into the block. The seconds are padded to two digits
+      // so the label does not change width as it counts.
+      const style = thinkingStyle(block.category)
+      const elapsed = block.live && block.startedAt !== undefined
+        ? Math.max(Math.floor((now - block.startedAt) / 1000), 0)
+        : (block.seconds ?? 0)
+      const clock = `${String(elapsed).padStart(2, "0")}s`
+      const label = `${style.label} \u00b7 ${clock}`
       const head =
-        `  ${theme.accent(block.expanded ? sym.chevronDown : sym.chevronRight)} ` +
+        `  ${style.color(style.icon)} ` +
         theme.dim(block.expanded ? label : `${label} \u2014 click to expand`)
       if (!block.expanded) {
         // Collapsed means collapsed: the model's reasoning stays inside the

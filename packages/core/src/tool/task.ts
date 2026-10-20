@@ -8,10 +8,19 @@
  * The brief is asked for as separate fields rather than one blob of prose: a
  * small model reliably fills in "aim / look at / approach / rules / tools /
  * return", and each part ends up in the child prompt in a predictable place.
- * Several independent sub-tasks can be sent in one call as a batch and run
- * concurrently — that is the point of them.
+ * Several sub-tasks can be sent in one call as a batch; they run one after
+ * another, so each is finished before the next starts. `parallel: true` runs
+ * them at the same time when the briefs are genuinely independent.
  */
-import { optionalString, ok, fail, type ImurunTool, type SubagentRequest, type SubagentRunner } from "./types"
+import {
+  optionalString,
+  ok,
+  fail,
+  type ImurunTool,
+  type SubagentRequest,
+  type SubagentResult,
+  type SubagentRunner,
+} from "./types"
 
 /** The parts of a brief, in the order they are laid out for the child. */
 export interface SubagentBrief {
@@ -88,8 +97,9 @@ export function createTaskTool(runner: SubagentRunner): ImurunTool {
       "report. Use it for broad exploration, research, or a chunk of work that stands on its own. The subagent " +
       "cannot see this conversation, so fill the brief in properly: aim, the files to look at, how far to go, the " +
       "rules, and what to return. Set agent only to pick a different working mode; by default the subagent uses " +
-      `yours. One of: ${agentList}. To run several independent chunks at once, send them together in ` +
-      "action=batch — they run concurrently and you get the reports side by side.",
+      `yours. One of: ${agentList}. To run several chunks one after another, send them together in ` +
+      "action=batch — each is finished before the next starts. Add parallel=true only when the briefs are " +
+      "independent and can safely run at the same time.",
     parameters: {
       type: "object",
       properties: {
@@ -121,6 +131,12 @@ export function createTaskTool(runner: SubagentRunner): ImurunTool {
             required: ["aim"],
           },
         },
+        parallel: {
+          type: "string",
+          enum: ["true", "false"],
+          description:
+            "For action=batch: run the briefs at the same time. Off by default - one task is finished before the next starts.",
+        },
       },
       required: [],
       additionalProperties: false,
@@ -128,7 +144,10 @@ export function createTaskTool(runner: SubagentRunner): ImurunTool {
     title(args) {
       const description = optionalString(args, "description")
       const batch = Array.isArray(args.tasks) ? (args.tasks as unknown[]).length : 0
-      if (batch > 0) return `task \u00b7 ${batch} in parallel`
+      if (batch > 0) {
+        const parallel = optionalString(args, "parallel") === "true"
+        return `task \u00b7 ${batch} ${parallel ? "in parallel" : "in sequence"}`
+      }
       return description ? `task ${description}` : "task"
     },
     async execute(args, ctx) {
@@ -145,15 +164,36 @@ export function createTaskTool(runner: SubagentRunner): ImurunTool {
       if (batch.length > 1) {
         const problems = batch.map((brief) => validateBrief(brief)).filter(Boolean)
         if (problems.length > 0) return fail(`Each sub-task needs a usable brief: ${problems[0]}`)
-        const results = await Promise.all(
-          batch.map((brief, index) =>
-            runOne({
-              prompt: renderBrief(brief),
-              description: `task ${index + 1}/${batch.length}`,
-              agentId,
-            }),
-          ),
-        )
+        // Sequential by default: one task is finished, and its result is in
+        // hand, before the next one starts. Two subagents editing the same
+        // files at once is a race, and a subagent that is still working cannot
+        // be consulted by the next one. `parallel: true` opts out of that
+        // when the briefs are genuinely independent.
+        const parallel = optionalString(args, "parallel") === "true"
+        const results: SubagentResult[] = []
+        if (parallel) {
+          results.push(
+            ...(await Promise.all(
+              batch.map((brief, index) =>
+                runOne({
+                  prompt: renderBrief(brief),
+                  description: `task ${index + 1}/${batch.length}`,
+                  agentId,
+                }),
+              ),
+            )),
+          )
+        } else {
+          for (const [index, brief] of batch.entries()) {
+            results.push(
+              await runOne({
+                prompt: renderBrief(brief),
+                description: `task ${index + 1}/${batch.length}`,
+                agentId,
+              }),
+            )
+          }
+        }
         const merged = results
           .map((result, index) => {
             const brief = batch[index]!
@@ -161,8 +201,9 @@ export function createTaskTool(runner: SubagentRunner): ImurunTool {
           })
           .join("\n\n")
         return ok(
-          `${batch.length} subagents finished in parallel (${results.map((result) => result.agentId).join(", ")}):\n\n${merged}`,
-          { title: `task \u00b7 ${batch.length} in parallel` },
+          `${batch.length} subagent${batch.length === 1 ? "" : "s"} finished ${parallel ? "in parallel" : "one after another"} ` +
+            `(${results.map((result) => result.agentId).join(", ")}):\n\n${merged}`,
+          { title: `task \u00b7 ${batch.length} ${parallel ? "in parallel" : "in sequence"}` },
         )
       }
 
