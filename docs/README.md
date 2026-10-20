@@ -51,9 +51,9 @@ These counts were read directly from the source at version 0.1.0.
 | Thing | Count | Where it is defined |
 | --- | --- | --- |
 | Packages | 7 | `packages/*` |
-| Tools in the base registry | 13 | `packages/core/src/tool/registry.ts` |
-| Tools in the interactive UI | 14 | base registry plus `task`, added in `packages/tui/src/app.ts` |
-| Slash commands | 26 | `packages/tui/src/commands.ts` |
+| Tools in the base registry | 14 | `packages/core/src/tool/registry.ts` |
+| Tools in the interactive UI | 15 | base registry plus `task`, added in `packages/tui/src/app.ts` |
+| Slash commands | 27 | `packages/tui/src/commands.ts` |
 | CLI subcommands | 10 | `packages/cli/src/index.ts` |
 | Provider presets | 11 | `packages/core/src/provider/presets.ts` |
 | Catalog models | 16 | `packages/modelmgr/src/registry/catalog.ts` |

@@ -1,7 +1,7 @@
 # Slash commands
 
 **What this covers:** every slash command in the interactive UI, what it does,
-its usage, and its aliases. It is the reference for the 26 commands defined in
+its usage, and its aliases. It is the reference for the 27 commands defined in
 `packages/tui/src/commands.ts`. For shell subcommands instead of in-session
 commands, see [CLI reference](cli-reference.md).
 
