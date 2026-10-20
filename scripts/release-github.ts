@@ -302,11 +302,11 @@ console.log("  or download a standalone binary from the release page — it need
 // optional dependency resolves to nothing and the install falls back to the
 // JavaScript bundle.
 if (npmToken) {
-  const npmDir = join(outDir, "npm")
-  const platformDirs = existsSync(npmDir)
-    ? (await readdir(npmDir, { withFileTypes: true }))
+  const npmRoot = join(outDir, "npm")
+  const platformDirs = existsSync(npmRoot)
+    ? (await readdir(npmRoot, { withFileTypes: true }))
         .filter((entry) => entry.isDirectory() && entry.name.startsWith("imurun-"))
-        .map((entry) => join(npmDir, entry.name))
+        .map((entry) => join(npmRoot, entry.name))
     : []
   if (platformDirs.length === 0) {
     console.log("\n  (no platform packages were built — the install will need Bun)")
