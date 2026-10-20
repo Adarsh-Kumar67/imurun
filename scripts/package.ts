@@ -195,7 +195,11 @@ for (const target of targets) {
   const { platform, arch } = splitTarget(target)
   const binaryDir = join(outDir, "binaries")
   await mkdir(binaryDir, { recursive: true })
-  const file = join(binaryDir, `imurun-${platform}-${arch}${EXTENSION}`)
+  // The extension follows the *target*, not the machine doing the build: a
+  // Linux binary compiled on Windows is still a Linux binary, and naming it
+  // `imurun-linux-x64.exe` would break every documented download URL.
+  const extension = platform === "windows" ? ".exe" : ""
+  const file = join(binaryDir, `imurun-${platform}-${arch}${extension}`)
 
   console.log(`\n▶ compiling ${target}`)
   const ok = await run(
@@ -206,7 +210,7 @@ for (const target of targets) {
 
   const bytes = (await Bun.file(file).arrayBuffer()).byteLength
   binaries.push({ target, file, bytes })
-  console.log(`  imurun-${platform}-${arch}${EXTENSION}  ${(bytes / 1024 / 1024).toFixed(1)} MB`)
+  console.log(`  imurun-${platform}-${arch}${extension}  ${(bytes / 1024 / 1024).toFixed(1)} MB`)
 }
 
 if (wantBinaries && binaries.length === 0) {
@@ -225,7 +229,7 @@ for (const binary of binaries) {
   const name = `@imurun/${platform}-${arch}`
   const dir = join(npmDir, `imurun-${platform}-${arch}`)
   await mkdir(join(dir, "bin"), { recursive: true })
-  await cp(binary.file, join(dir, "bin", `imurun${EXTENSION}`))
+  await cp(binary.file, join(dir, "bin", `imurun${platform === "windows" ? ".exe" : ""}`))
 
   await Bun.write(
     join(dir, "package.json"),

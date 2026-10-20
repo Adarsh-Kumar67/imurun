@@ -114,9 +114,10 @@ without giving up the machine it runs on.
 ## Quickstart
 
 ```bash
-# install — either from npm, or straight from GitHub Releases
+# install — pick whichever suits your machine
 npm install -g imurun
 npm install -g https://github.com/shubham001312/imurun/releases/latest/download/imurun-npm.tgz
+pip install imurun
 
 # open the interactive UI — on a fresh machine this sets up the engine and the
 # best-fitting model automatically, then you can just start talking

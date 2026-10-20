@@ -57,6 +57,28 @@ imurun --version
 
 which prints the version (`imurun 0.1.0` at the time of writing).
 
+## Option 1b — install with pip
+
+```bash
+pip install imurun
+```
+
+If you work in Python, this is the shortest route. The package installs one
+`imurun` command on your PATH. It is a thin launcher: on the first run it
+downloads the standalone executable that matches your machine (Windows, Linux
+or macOS, x64 or arm64) from the GitHub releases, caches it under
+`~/.imurun/python`, and runs it. Nothing is installed system-wide, no
+administrator rights are needed, and later runs start instantly.
+
+Verify:
+
+```bash
+imurun --version
+```
+
+The command is identical to the npm one, so every example in this guide works
+exactly as written.
+
 ## Option 2 — install from GitHub
 
 Everything published to npm is also attached to each
