@@ -18,6 +18,7 @@ import type { Session } from "@imurun/schema"
 import type { Message } from "@imurun/schema"
 import { NOTE_KINDS, type NoteKind } from "@imurun/schema"
 import { bm25Search, formatHit, type SearchDoc, type SearchHit, type SearchOptions } from "./search"
+import { rankByRetention } from "./retention"
 import { buildDigest, digestToMarkdown, type SessionDigest } from "./summarize"
 import { isSealed, openSecret, sealSecret } from "./vault"
 
@@ -388,7 +389,26 @@ export class MemoryStore {
   /** BM25 recall over everything remembered. */
   async search(query: string, options: SearchOptions = {}): Promise<SearchHit[]> {
     const docs = await this.searchDocs(options.sources)
-    return bm25Search(docs, query, options)
+    const hits = bm25Search(docs, query, options)
+    await this.touchNotes(hits)
+    return hits
+  }
+
+  /**
+   * Records that recall surfaced these notes. The count feeds retention: a note
+   * that keeps being useful stays pinned, one nobody touches fades on schedule.
+   */
+  private async touchNotes(hits: readonly SearchHit[]): Promise<void> {
+    const ids = new Set(hits.filter((hit) => hit.doc.source === "note").map((hit) => hit.doc.id))
+    if (ids.size === 0) return
+    const file = await this.load()
+    let changed = false
+    for (const note of file.notes) {
+      if (!ids.has(note.id)) continue
+      note.usageCount++
+      changed = true
+    }
+    if (changed) await this.save()
   }
 
   /**
@@ -402,14 +422,15 @@ export class MemoryStore {
     const file = await this.load()
     const normalized = projectPath?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
 
-    return file.notes
-      .filter((note) => note.kind !== "note" && note.kind !== "credential")
-      .filter((note) => {
-        if (!note.projectPath) return true
-        if (!normalized) return true
-        return note.projectPath.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === normalized
-      })
-      .sort((a, b) => b.updatedAt - a.updatedAt)
+    return rankByRetention(
+      file.notes
+        .filter((note) => note.kind !== "note" && note.kind !== "credential")
+        .filter((note) => {
+          if (!note.projectPath) return true
+          if (!normalized) return true
+          return note.projectPath.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === normalized
+        }),
+    )
       .slice(0, limit)
       .map((note) => `(${note.kind}) ${note.text}`)
   }

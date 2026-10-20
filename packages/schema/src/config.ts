@@ -121,6 +121,23 @@ export const WebConfig = z.object({
   cacheFetches: z.boolean().default(false),
   /** Most of a page web_fetch downloads before it is cut off. */
   maxPageKB: z.number().int().positive().default(2048),
+  /**
+   * Automatic research before answering: `auto` uses the learned need
+   * classifier, `always` searches every turn, `off` never searches on its own.
+   * The `web_search` tool remains available in every mode.
+   */
+  research: z.enum(["auto", "always", "off"]).default("auto"),
+  /** How many distinct search queries one research pass may make. */
+  researchMaxQueries: z.number().int().min(1).max(8).default(3),
+  /** How many result pages one research pass may read. */
+  researchMaxPages: z.number().int().min(1).max(8).default(3),
+  /**
+   * After the draft, check its factual claims against the gathered evidence and
+   * run one bounded follow-up search when something is unsupported.
+   */
+  researchVerify: z.boolean().default(true),
+  /** Where the need classifier keeps its learned weights. */
+  researchModel: z.string().optional(),
 })
 export type WebConfig = z.infer<typeof WebConfig>
 

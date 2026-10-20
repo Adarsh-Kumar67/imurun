@@ -15,6 +15,7 @@ import type { ContentPart, ImurunConfig, ToolCall, ToolResult } from "@imurun/sc
 import { createLogger, imurunDir, resolveShell, type Logger } from "@imurun/util"
 import type { SessionStore } from "../session/session"
 import { buildSystemPrompt } from "../session/system-prompt"
+import { capabilityNudge, detectCapabilityRefusal } from "./capability"
 import { ProviderRegistry, type ResolvedModel } from "../provider/registry"
 import type { ToolRegistry } from "../tool/registry"
 import type { ToolContext } from "../tool/types"
@@ -175,6 +176,9 @@ const VERIFY_PROMPT =
   "wrote or edited (or its tail), and if the project has a test, build or type check that covers it, run that. " +
   "If something did not land, do not simply repeat the same attempt — work out why and fix it a different way. " +
   "Then give your final answer: what changed, in which files, what you ran, and what the result was."
+
+/** How many capability-refusal corrections a single turn may spend. */
+const MAX_REFUSAL_NUDGES = 1
 
 function zeroUsage(): AgentUsage {
   return { inputTokens: 0, outputTokens: 0 }
@@ -542,6 +546,7 @@ export class Agent {
     let finalText = ""
     let steps = 0
     let continuations = 0
+    let refusalNudges = 0
     // Multistep discipline: remember what this turn changed and whether anything
     // looked at it afterwards, so the agent checks its own work before finishing.
     const verifyChanges = run.verifyChanges ?? true
@@ -793,6 +798,29 @@ export class Agent {
       }
 
       if (toolCalls.length === 0) {
+        // A small model's chat-assistant prior sometimes answers a request with
+        // "I cannot execute shell commands" while sitting on a working shell.
+        // The turn is not over: one correction names its real tools and asks it
+        // to start. Bounded, and only when tools actually exist this run.
+        if (
+          refusalNudges < MAX_REFUSAL_NUDGES &&
+          activeTools.list().length > 0 &&
+          detectCapabilityRefusal(text)
+        ) {
+          refusalNudges++
+          sessions.addMessage({
+            sessionId: session.id,
+            role: "user",
+            content: capabilityNudge(activeTools.list().map((tool) => tool.name)),
+          })
+          run.onEvent?.({
+            type: "notice",
+            text: "the model claimed it has no tools — reminding it what it can actually run",
+            tone: "warn",
+          })
+          this.log.warn("capability refusal detected — nudging with the connected tool list")
+          continue
+        }
         // The model is ready to answer. If this turn changed files and nothing
         // has looked at them since, ask for one pass of checking before the
         // answer stands — the difference between "I wrote it" and "it is there".
