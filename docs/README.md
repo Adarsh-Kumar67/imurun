@@ -1,7 +1,7 @@
 # IMURUN documentation
 
 This is the documentation index for IMURUN, a local-first AI coding agent for the
-terminal. It is written for version **0.1.4** and describes only behaviour that
+terminal. It is written for version **0.1.5** and describes only behaviour that
 exists in this repository today.
 
 **What this covers:** what IMURUN is, how the documentation is organised, which
@@ -21,7 +21,7 @@ source. You can add an online provider if you want one, but local is the default
 - Publisher: ImuTechz
 - Author: Shubham Mallick (<dev@imutechz.in>)
 - License: MIT © 2026 ImuTechz
-- Version documented here: 0.1.4
+- Version documented here: 0.1.5
 
 ## Which guide to read
 
@@ -47,7 +47,7 @@ source. You can add an online provider if you want one, but local is the default
 
 ## The numbers in this documentation
 
-These counts were read directly from the source at version 0.1.4.
+These counts were read directly from the source at version 0.1.5.
 
 | Thing | Count | Where it is defined |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ These counts were read directly from the source at version 0.1.4.
 | Tools in the base registry | 15 | `packages/core/src/tool/registry.ts` |
 | Tools in the interactive UI | 16 | base registry plus `task`, added in `packages/tui/src/app.ts` |
 | Slash commands | 29 | `packages/tui/src/commands.ts` |
-| CLI subcommands | 10 | `packages/cli/src/index.ts` |
+| CLI subcommands | 12 | `packages/cli/src/index.ts` |
 | Provider presets | 11 | `packages/core/src/provider/presets.ts` |
 | Catalog models | 16 | `packages/modelmgr/src/registry/catalog.ts` |
 | Built-in skills | 53 | `packages/core/src/agent/skill-catalog.ts` |

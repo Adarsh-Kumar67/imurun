@@ -16,6 +16,7 @@ import { modelsCommand } from "./commands/models"
 import { ragCommand } from "./commands/rag"
 import { skillsCommand } from "./commands/skills"
 import { updateCommand } from "./commands/update"
+import { setupCommand } from "./commands/setup"
 import { VERSION } from "./version"
 
 async function main(): Promise<number> {
@@ -36,6 +37,7 @@ async function main(): Promise<number> {
     .register(skillsCommand)
     .register(ragCommand)
     .register(updateCommand)
+    .register(setupCommand)
 
   runner.register({
     name: "version",

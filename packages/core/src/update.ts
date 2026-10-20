@@ -92,6 +92,39 @@ function npmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm"
 }
 
+/** How this copy of IMURUN was installed. */
+export type InstallMethod = "npm" | "pip" | "binary" | "unknown"
+
+/**
+ * Works out how IMURUN was installed, so an update can use the right tool.
+ *
+ * The Python launcher says so in the environment; otherwise the path tells:
+ * a copy inside `node_modules` came from npm, and a copy beside a Python
+ * package came from pip.
+ */
+export function detectInstallMethod(): InstallMethod {
+  const declared = process.env.IMURUN_INSTALL?.trim().toLowerCase()
+  if (declared === "npm" || declared === "pip" || declared === "binary") return declared
+
+  const executable = process.execPath ?? ""
+  const entry = process.argv[1] ?? ""
+  const path = `${executable} ${entry}`.replace(/\\/g, "/").toLowerCase()
+  if (path.includes("/node_modules/") || path.includes("/npm/")) return "npm"
+  if (path.includes("/site-packages/") || path.includes("/scripts/imurun")) return "pip"
+  if (process.env.VIRTUAL_ENV) return "pip"
+  return "unknown"
+}
+
+/** The command that updates this installation. */
+export function updateCommandFor(method: InstallMethod): { command: string; args: string[] } {
+  if (method === "pip") {
+    // The same interpreter that is running now, so a virtualenv stays
+    // self-contained.
+    return { command: process.execPath, args: ["-m", "pip", "install", "--upgrade", "imurun"] }
+  }
+  return { command: npmCommand(), args: ["install", "-g", "imurun@latest"] }
+}
+
 export interface UpdateResult {
   ok: boolean
   /** The version that was running before. */
@@ -108,20 +141,23 @@ export interface UpdateResult {
  * program was installed some other way, npm says so and the message explains
  * what to do instead.
  */
-export function runUpdate(current: string, options: { dryRun?: boolean } = {}): UpdateResult {
+export function runUpdate(current: string, options: { dryRun?: boolean; method?: InstallMethod } = {}): UpdateResult {
   if (options.dryRun) {
     return { ok: false, from: current, message: "dry run — nothing was installed" }
   }
-  const npm = npmCommand()
-  logger.info(`updating: ${npm} install -g imurun@latest`)
-  const result = spawnSync(npm, ["install", "-g", "imurun@latest"], { stdio: "inherit", shell: false })
+  const method = options.method ?? detectInstallMethod()
+  const { command, args } = updateCommandFor(method)
+  logger.info(`updating: ${command} ${args.join(" ")}`)
+  const result = spawnSync(command, args, { stdio: "inherit", shell: false })
   if (result.status !== 0) {
     return {
       ok: false,
       from: current,
       message:
-        "the install did not finish. If IMURUN was installed another way, update it that way instead — " +
-        "or download the new release from https://github.com/ImuTechz/imurun/releases",
+        method === "pip"
+          ? "the install did not finish. Try it by hand: python -m pip install --upgrade imurun"
+          : "the install did not finish. If IMURUN was installed another way, update it that way instead — " +
+            "or download the new release from https://github.com/ImuTechz/imurun/releases",
     }
   }
   return { ok: true, from: current, message: "updated to the latest version" }

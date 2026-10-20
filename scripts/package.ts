@@ -118,12 +118,34 @@ function nativeBinary() {
 
 const args = process.argv.slice(2)
 const binary = nativeBinary()
-const child = binary
-  ? spawnSync(binary, args, { stdio: "inherit" })
-  : spawnSync("bun", [join(here, "..", "dist", "imurun.js"), ...args], { stdio: "inherit" })
+if (binary) {
+  const child = spawnSync(binary, args, { stdio: "inherit" })
+  if (child.error) {
+    console.error(\`  Could not run the IMURUN executable: \${child.error.message}\`)
+    process.exit(1)
+  }
+  process.exit(child.status ?? 0)
+}
 
+// No executable for this platform, so the JavaScript bundle is used, and the
+// bundle needs Bun. Say so plainly rather than letting the operating system
+// print "spawnSync bun ENOENT".
+const bundle = join(here, "..", "dist", "imurun.js")
+const child = spawnSync("bun", [bundle, ...args], { stdio: "inherit" })
 if (child.error) {
-  console.error(child.error.message)
+  const missing = child.error.code === "ENOENT"
+  console.error("")
+  console.error("  IMURUN needs Bun (1.2 or newer) to run the JavaScript build.")
+  console.error("")
+  if (missing) {
+    console.error("  Install Bun, then run imurun again:")
+    console.error("    Windows:  powershell -c \\"irm bun.sh/install.ps1 | iex\\"")
+    console.error("    macOS:    curl -fsSL https://bun.sh/install | bash")
+    console.error("    Linux:    curl -fsSL https://bun.sh/install | bash")
+  }
+  console.error("  Or download a standalone build that needs nothing else:")
+  console.error("    https://github.com/ImuTechz/imurun/releases/latest")
+  console.error("")
   process.exit(1)
 }
 process.exit(child.status ?? 0)
@@ -159,6 +181,8 @@ if (!existsSync(cliEntry)) {
 const version = await readVersion()
 const bundleDir = join(outDir, "bundle")
 const bundlePath = join(bundleDir, "imurun.js")
+const postinstallEntry = join(root, "scripts", "postinstall.ts")
+const postinstallBundle = join(bundleDir, "postinstall.js")
 
 await rm(outDir, { recursive: true, force: true })
 await mkdir(bundleDir, { recursive: true })
@@ -181,6 +205,21 @@ if (!bundled) process.exit(1)
 
 const bundleBytes = (await Bun.file(bundlePath).arrayBuffer()).byteLength
 console.log(`  imurun.js  ${(bundleBytes / 1024 / 1024).toFixed(2)} MB  (self-contained)`)
+
+// The postinstall hook, bundled on its own: it must not drag the whole
+// program into the install step, and it must not depend on the program
+// being on PATH yet. It is built for node, because node is the one runtime
+// an npm install is guaranteed to have.
+if (existsSync(postinstallEntry)) {
+  const built = await run(
+    [process.execPath, "build", postinstallEntry, "--target=node", `--outfile=${postinstallBundle}`],
+    "postinstall",
+  )
+  if (built) {
+    const postinstallBytes = (await Bun.file(postinstallBundle).arrayBuffer()).byteLength
+    console.log(`  postinstall.js  ${(postinstallBytes / 1024).toFixed(1)} KB`)
+  }
+}
 
 // ── 2. standalone executables ───────────────────────────────────────────────
 
@@ -261,6 +300,12 @@ await Bun.write(join(mainPackageDir, "README.md"), README)
 await Bun.write(join(mainPackageDir, "bin", "imurun.js"), LAUNCHER)
 // Harmless on Windows (where npm writes a .cmd shim anyway), required on Unix.
 await chmod(join(mainPackageDir, "bin", "imurun.js"), 0o755).catch(() => {})
+// The hook that leaves the machine ready: the engine and a model that fits
+// it are installed as part of the install, not as a separate chore.
+if (existsSync(postinstallBundle)) {
+  await cp(postinstallBundle, join(mainPackageDir, "bin", "postinstall.js"))
+  await chmod(join(mainPackageDir, "bin", "postinstall.js"), 0o755).catch(() => {})
+}
 
 const manifest = {
   name: "imurun",
@@ -281,6 +326,10 @@ const manifest = {
   // No leading "./": npm drops a bin path that starts with it, and the
   // `imurun` command then never appears on PATH after an install.
   bin: { imurun: "bin/imurun.js" },
+  // The machine is set up as part of the install: the engine and a model
+  // that fits it are installed here, not as a separate chore. It never fails
+  // the install, and `IMURUN_SKIP_SETUP=1` turns it off.
+  scripts: { postinstall: "node bin/postinstall.js" },
   files: ["bin/", "dist/", "LICENSE", "README.md"],
   keywords: ["ai", "agent", "llm", "local", "llama.cpp", "coding", "cli", "offline"],
   ...(Object.keys(optionalDependencies).length > 0 ? { optionalDependencies } : {}),

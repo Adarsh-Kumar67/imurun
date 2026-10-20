@@ -49,13 +49,25 @@ on PATH by default on every platform), so `imurun` works from any directory.
 The published payload is a single self-contained JavaScript bundle with no
 `node_modules`, run by a small launcher. Bun 1.2+ must be on PATH.
 
+**The install sets the machine up.** When the install finishes, IMURUN looks
+at the machine, picks the model that fits it, installs the inference engine
+and downloads the weights — so the command is ready to answer a question
+instead of half-installed. It never fails the install: if the download cannot
+finish, the program is still there and `imurun setup` will do it later.
+
+To install the program alone and set the machine up later:
+
+```bash
+IMURUN_SKIP_SETUP=1 npm install -g imurun
+```
+
 Verify:
 
 ```bash
 imurun --version
 ```
 
-which prints the version (`imurun 0.1.4` at the time of writing).
+which prints the version (`imurun 0.1.5` at the time of writing).
 
 ## Option 1b — install with pip
 
@@ -67,8 +79,20 @@ If you work in Python, this is the shortest route. The package installs one
 `imurun` command on your PATH. It is a thin launcher: on the first run it
 downloads the standalone executable that matches your machine (Windows, Linux
 or macOS, x64 or arm64) from the GitHub releases, caches it under
-`~/.imurun/python`, and runs it. Nothing is installed system-wide, no
-administrator rights are needed, and later runs start instantly.
+`~/.imurun/python`, sets the machine up the same way the npm install does,
+and runs it. Nothing is installed system-wide, no administrator rights are
+needed, and later runs start instantly.
+
+**pip does not upgrade what is already installed.** `pip install imurun` on a
+machine that already has it leaves the old copy in place, which is how people
+end up running a version from months ago. Use:
+
+```bash
+pip install --upgrade imurun
+```
+
+The launcher also checks PyPI on every run and says so when a newer version
+has been published, so a stale copy is never silent.
 
 Verify:
 

@@ -66,6 +66,41 @@ describe("KeyParser", () => {
     expect(parser.push("A")).toEqual([{ name: "up" }])
   })
 
+  test("a bracketed paste arrives as one block of text", () => {
+    const parser = new KeyParser()
+    const events = parser.push("\u001b[200~hello\nworld\u001b[201~")
+    expect(events).toEqual([{ paste: "hello\nworld" }])
+  })
+
+  test("a paste split across two reads is still one paste", () => {
+    const parser = new KeyParser()
+    expect(parser.push("\u001b[200~hello\nwor")).toEqual([])
+    expect(parser.hasPending).toBe(true)
+    expect(parser.push("ld\u001b[201~")).toEqual([{ paste: "hello\nworld" }])
+  })
+
+  test("a paste is never a stream of keystrokes: the newline does not send", () => {
+    const parser = new KeyParser()
+    const events = parser.push("\u001b[200~line one\nline two\nline three\u001b[201~")
+    // One event, not one per line: a pasted file must not send the message.
+    expect(events).toHaveLength(1)
+    expect(events[0]!.paste).toBe("line one\nline two\nline three")
+    expect(events.some((event) => event.name === "enter")).toBe(false)
+  })
+
+  test("an unbracketed multi-line paste is still recognised", () => {
+    const parser = new KeyParser()
+    // A terminal that does not do bracketed paste sends the raw text.
+    const events = parser.push("line one\nline two")
+    expect(events).toEqual([{ paste: "line one\nline two" }])
+  })
+
+  test("a typed newline on its own is still the enter key", () => {
+    const parser = new KeyParser()
+    expect(parser.push("\r")).toEqual([{ name: "enter" }])
+    expect(parser.push("text\r")).toEqual([{ input: "text" }, { name: "enter" }])
+  })
+
   test("decodes an SGR mouse press with its coordinates", () => {
     const parser = new KeyParser()
     // button 0 (left), column 12, row 7, pressed

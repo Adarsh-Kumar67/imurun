@@ -309,6 +309,37 @@ imurun rag clear
 
 See [RAG](rag.md).
 
+## `imurun setup`
+
+Set this machine up so it can actually run a model: the inference engine, and
+a model that fits the machine's memory. It asks nothing — the hardware is
+detected, the best-fitting model is chosen, the engine is installed and the
+weights are downloaded.
+
+The same work happens automatically when the program is installed, so this is
+for a machine that was set up by hand, or one whose model was deleted.
+
+```bash
+imurun setup [model-id] [--check] [--force] [--quiet]
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `--check` | boolean | Say what is installed and what would be, and stop. |
+| `--force` | boolean | Install even when a model is already there. |
+| `--quiet` | boolean | Only report the result. |
+
+| Subcommand | Does |
+| --- | --- |
+| `setup` | Install the engine and the model that fits this machine. |
+| `setup <model-id>` | Install a specific model, if it fits. |
+
+```bash
+imurun setup --check
+imurun setup
+imurun setup qwen2.5-coder-7b
+```
+
 ## `imurun update`
 
 Check for a newer IMURUN and install it. IMURUN is published on npm, so the
@@ -327,9 +358,11 @@ Usage: imurun update [check] [--yes]
 | `check` | The same as `--check`. |
 
 Nothing is installed unless you ask for it: the check reads one small field
-from the registry, and the install is a separate, deliberate step. If the
-install does not apply — a standalone binary, or a pip install — the message
-says so and points at the release page instead.
+from the registry, and the install is a separate, deliberate step. The update
+uses the tool that installed IMURUN in the first place — `npm` for a global
+install, `pip` for a Python one — so it never leaves two copies behind. If
+the install does not apply — a standalone binary — the message says so and
+points at the release page instead.
 
 ```bash
 imurun update check
@@ -344,11 +377,11 @@ not install anything without being asked.
 ## `imurun version` and `imurun help`
 
 ```bash
-imurun version          # prints: imurun 0.1.4
+imurun version          # prints: imurun 0.1.5
 imurun help             # the general command list
 imurun help models      # help for one command
 imurun models --help    # the same, via the command's own flag
 ```
 
 `imurun --version` and `imurun -v` print the version without dispatching a
-subcommand. Version 0.1.4 is defined in `packages/cli/src/version.ts`.
+subcommand. Version 0.1.5 is defined in `packages/cli/src/version.ts`.

@@ -117,6 +117,22 @@ if (!token && !dryRun) {
 
 console.log(`\n▶ IMURUN v${version} → ${repo}${dryRun ? " (dry run)" : ""}\n`)
 
+// Nothing is published until everything has been proved: the type check, the
+// whole test suite, and the package installed into a clean directory and run.
+if (!has("skip-check")) {
+  console.log("▶ checking the release")
+  const check = spawnSync(process.execPath, ["run", "scripts/check-release.ts"], {
+    stdio: "inherit",
+    cwd: root,
+    shell: false,
+  })
+  if (check.status !== 0) {
+    console.error("\n✖ the release check failed — nothing was published.")
+    process.exit(1)
+  }
+  console.log("")
+}
+
 console.log("▶ building and staging")
 run(process.execPath, ["run", "package", "--", "--binaries", `--targets=${targets}`])
 

@@ -12,6 +12,16 @@ straight away. Nothing is installed system-wide, no administrator rights are
 needed, and the download is verified against the size published with the
 release.
 
+Two things the launcher takes care of, because they are the two that bite:
+
+  * **The machine is set up.** Installing the program is only half of it: to
+    run a model you also need the inference engine and a model file. The
+    first run does that part, so the machine is ready rather than
+    half-installed. ``IMURUN_SKIP_SETUP=1`` turns it off.
+  * **An old copy is noticed.** ``pip install imurun`` does not upgrade an
+    install that is already there, so a stale copy is easy to end up with.
+    The launcher checks PyPI and says so when there is a newer one.
+
 If you would rather install the program itself, see https://imutechz.in and the
 project README - the same command works from npm (``npm install -g imurun``)
 and from a standalone binary.
@@ -30,7 +40,7 @@ from pathlib import Path
 
 __all__ = ["__version__", "main", "launcher_path", "download_url"]
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 #: Where the releases live. One place, so a move is a one-line change.
 REPO = "shubham001312/imurun"
@@ -160,6 +170,59 @@ def ensure_executable() -> Path:
     return download_executable(path)
 
 
+def _run_setup(executable: Path) -> int:
+    """
+    Set the machine up on the first run.
+
+    The engine and a model that fits are installed here, so a fresh install is
+    ready to answer a question rather than half-installed. Any failure is
+    reported and ignored: the program itself still runs.
+    """
+    if os.environ.get("IMURUN_SKIP_SETUP") == "1":
+        return 0
+    try:
+        result = subprocess.run([str(executable), "setup", "--quiet"], check=False)
+        return result.returncode
+    except OSError as error:
+        print(f"  The automatic setup did not run: {error}", file=sys.stderr)
+        return 1
+
+
+def _latest_pypi_version(timeout: float = 4.0) -> str | None:
+    """
+    The newest version on PyPI, or None when it cannot be reached.
+
+    ``pip install imurun`` does not upgrade a copy that is already installed,
+    so a stale one is easy to end up with. This is the check that says so.
+    """
+    if os.environ.get("IMURUN_NO_UPDATE_CHECK") == "1":
+        return None
+    try:
+        with urllib.request.urlopen(
+            "https://pypi.org/pypi/imurun/json", timeout=timeout
+        ) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    version = body.get("info", {}).get("version")
+    return version if isinstance(version, str) else None
+
+
+def _report_newer_version() -> None:
+    """Say so when a newer copy is published — the old one is easy to keep."""
+    latest = _latest_pypi_version()
+    if not latest or latest == __version__:
+        return
+    print(
+        f"  A newer IMURUN is published: {latest} (this copy is {__version__}).",
+        file=sys.stderr,
+    )
+    print(
+        "  To update:  python -m pip install --upgrade imurun",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """
     The ``imurun`` entry point.
@@ -180,13 +243,23 @@ def main(argv: list[str] | None = None) -> int:
         print("Website: https://imutechz.in")
         return 0
 
+    # The program is told how it was installed, so an update uses the right
+    # tool: pip here, npm for a global install.
+    os.environ.setdefault("IMURUN_INSTALL", "pip")
+
     executable = ensure_executable()
+    _report_newer_version()
 
     # A local build in the source tree wins, so a developer can run the
     # program they are editing without a download.
     local = Path.cwd() / "dist" / "imurun.js"
     if local.exists():
         return _run_bun(local, args)
+
+    # The first run sets the machine up: the engine and a model that fits it.
+    if not launcher_path().exists() or os.environ.get("IMURUN_SETUP_DONE") != "1":
+        _run_setup(executable)
+        os.environ["IMURUN_SETUP_DONE"] = "1"
 
     return _run(executable, args)
 

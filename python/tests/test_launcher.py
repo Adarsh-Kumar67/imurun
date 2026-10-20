@@ -147,6 +147,46 @@ class EntryPointTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("imutechz.in", buffer.getvalue())
 
+    def test_a_newer_release_on_pypi_is_reported(self) -> None:
+        """An old copy is easy to keep: pip does not upgrade what is there."""
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        original = imurun._latest_pypi_version
+        imurun._latest_pypi_version = lambda: "99.0.0"
+        try:
+            with contextlib.redirect_stderr(buffer):
+                imurun._report_newer_version()
+        finally:
+            imurun._latest_pypi_version = original  # type: ignore[assignment]
+        self.assertIn("99.0.0", buffer.getvalue())
+        self.assertIn("pip install --upgrade imurun", buffer.getvalue())
+
+    def test_the_current_version_is_not_reported_as_outdated(self) -> None:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        original = imurun._latest_pypi_version
+        imurun._latest_pypi_version = lambda: imurun.__version__
+        try:
+            with contextlib.redirect_stderr(buffer):
+                imurun._report_newer_version()
+        finally:
+            imurun._latest_pypi_version = original  # type: ignore[assignment]
+        self.assertEqual(buffer.getvalue(), "")
+
+    def test_an_unreachable_pypi_is_not_an_error(self) -> None:
+        original = imurun.urllib.request.urlopen
+        imurun.urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(  # type: ignore[assignment]
+            imurun.urllib.error.URLError("offline")
+        )
+        try:
+            self.assertIsNone(imurun._latest_pypi_version())
+        finally:
+            imurun.urllib.request.urlopen = original  # type: ignore[assignment]
+
 
 if __name__ == "__main__":
     unittest.main()

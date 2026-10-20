@@ -635,6 +635,12 @@ export class TuiApp {
         if (this.closed) return
         continue
       }
+      if (key.paste !== undefined) {
+        // A paste is inserted as a block, in whichever field is asking.
+        if (this.modal?.kind === "input") this.insertText(key.paste)
+        else this.insertPaste(key.paste)
+        continue
+      }
       if (this.modal) this.handleModalKey(key)
       else if (this.overlay) this.handleOverlayKey(key)
       else this.handleChatKey(key)
@@ -957,6 +963,26 @@ export class TuiApp {
     this.inputCursor += text.length
     this.historyIndex = -1
     this.syncCompletion()
+  }
+
+  /**
+   * Inserts a paste.
+   *
+   * The text goes in as it is — newlines and all — because a paste is a
+   * block of text, not a sequence of keystrokes. A carriage return becomes a
+   * newline, since that is what a copied file usually has.
+   */
+  private insertPaste(text: string): void {
+    const clean = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    if (clean.length === 0) return
+    this.insertText(clean)
+    // A long paste is worth saying out loud: the user can see that it landed.
+    const lines = clean.split("\n").length
+    this.pushNotice(
+      `pasted ${clean.length} character${clean.length === 1 ? "" : "s"}` +
+        `${lines > 1 ? ` across ${lines} lines` : ""} \u00b7 enter sends it`,
+      "info",
+    )
   }
 
   /** Returns true when the key changed the input buffer. */

@@ -42,6 +42,14 @@ export interface KeyEvent {
   input?: string
   /** Set for a mouse event (clicks and wheel), when mouse reporting is on. */
   mouse?: MouseEvent
+  /**
+   * The text of a paste, when the terminal sent one as a single block.
+   *
+   * A paste is not a stream of keystrokes: it arrives wrapped in the
+   * bracketed-paste markers, and it must be inserted as a whole. Treated as
+   * keystrokes, a pasted file would send the message on its first newline.
+   */
+  paste?: string
 }
 
 /** CSI/SS3 sequences for special keys, without the leading escape. */
@@ -68,8 +76,20 @@ const SEQUENCES: Record<string, KeyName> = {
   "OF": "end",
 }
 
-export class KeyParser {
-  /**
+/** The markers a terminal wraps a paste in. */
+const PASTE_START = "\u001b[200~"
+const PASTE_END = "\u001b[201~"
+
+/** The position of the first newline in the text, or -1. */
+function findNewline(text: string): number {
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!
+    if (char === "\n" || char === "\r") return index
+  }
+  return -1
+}
+
+export class KeyParser {  /**
    * A sequence that arrived in pieces. The terminal can split a mouse report
    * or an escape sequence across two reads, and a half-sequence that is
    * treated as text ends up *typed into the prompt* — which is how a click
@@ -87,6 +107,38 @@ export class KeyParser {
     this.pending = ""
     const events: KeyEvent[] = []
     let i = 0
+
+    // A bracketed paste is checked first: the text between the markers is
+    // one paste, not a run of keystrokes. Handled before everything else,
+    // because a pasted file usually ends in a newline — read as a keystroke,
+    // that newline would send the message in the middle of the paste.
+    const bracketed = data.indexOf(PASTE_START)
+    if (bracketed !== -1) {
+      const end = data.indexOf(PASTE_END, bracketed + PASTE_START.length)
+      if (end === -1) {
+        // The paste is still arriving: hold the whole thing back.
+        this.pending = data.slice(bracketed)
+        return events
+      }
+      const text = data.slice(bracketed + PASTE_START.length, end)
+      events.push({ paste: text })
+      // Anything before the marker is ordinary input.
+      const before = data.slice(0, bracketed)
+      if (before) events.push(...this.push(before))
+      return events
+    }
+
+    // A terminal that does not do bracketed paste sends the text as it is.
+    // A newline in the *middle* of a chunk is the giveaway: a person typing
+    // never produces one, because a typed newline is always the last thing in
+    // the chunk. So a chunk like that is a paste, and treating it as
+    // keystrokes would send the message on its first line.
+    const newline = findNewline(data)
+    if (newline !== -1 && newline < data.length - 1) {
+      const text = data.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+      events.push({ paste: text })
+      return events
+    }
 
     while (i < data.length) {
       const char = data[i]!
@@ -203,8 +255,8 @@ export class KeyParser {
 
       // printable run (also covers pasted text)
       let run = ""
-      while (i < chunk.length) {
-        const c = chunk[i]!
+      while (i < data.length) {
+        const c = data[i]!
         const cc = c.charCodeAt(0)
         if (c === "\u001b" || c === "\r" || c === "\n" || c === "\t" || c === " " || c === "\u007f" || c === "\b" || cc < 27) break
         run += c
@@ -247,8 +299,7 @@ export class KeyParser {
  * after `ESC [` that has no such byte is incomplete. A mouse report is the
  * same shape with a `<` in front of it.
  */
-function isPartialEscape(text: string): boolean {
-  if (text === "\u001b") return true
+function isPartialEscape(text: string): boolean {  if (text === "\u001b") return true
   if (text.length < 2) return false
   // ESC O is the start of the cursor keys (OA, OB, …).
   if (text === "\u001bO") return true
