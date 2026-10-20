@@ -1,7 +1,7 @@
 # IMURUN documentation
 
 This is the documentation index for IMURUN, a local-first AI coding agent for the
-terminal. It is written for version **0.1.5** and describes only behaviour that
+terminal. It is written for version **0.1.6** and describes only behaviour that
 exists in this repository today.
 
 **What this covers:** what IMURUN is, how the documentation is organised, which
@@ -21,7 +21,7 @@ source. You can add an online provider if you want one, but local is the default
 - Publisher: ImuTechz
 - Author: Shubham Mallick (<dev@imutechz.in>)
 - License: MIT © 2026 ImuTechz
-- Version documented here: 0.1.5
+- Version documented here: 0.1.6
 
 ## Which guide to read
 
@@ -47,7 +47,7 @@ source. You can add an online provider if you want one, but local is the default
 
 ## The numbers in this documentation
 
-These counts were read directly from the source at version 0.1.5.
+These counts were read directly from the source at version 0.1.6.
 
 | Thing | Count | Where it is defined |
 | --- | --- | --- |
