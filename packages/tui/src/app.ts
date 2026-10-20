@@ -106,7 +106,7 @@ import { Screen } from "./screen"
 import { sidebarLines, tailPath, type SidebarState, type SidebarTodo } from "./sidebar"
 import { parseSlash, type ParsedSlash, type SlashRegistry } from "./slash"
 import { clampVisible, firstLine, fitVisible, padVisible, visibleWidth, wrapText } from "./text"
-import { sym, setTheme, theme, gradient, TITLE_GRADIENT_FROM, TITLE_GRADIENT_TO } from "./theme"
+import { sym, setTheme, theme, gradientBand, TITLE_GRADIENT_FROM, TITLE_GRADIENT_TO } from "./theme"
 
 export { fitInput } from "./text"
 
@@ -174,6 +174,12 @@ type Modal = ConfirmModal | InputModal
 
 const SPINNER_TICK_MS = 130
 const RENDER_THROTTLE_MS = 40
+/**
+ * How long a half-arrived escape sequence is held before it is called an
+ * Escape key. Long enough for the rest of a split mouse report, short enough
+ * that the Escape key still feels instant.
+ */
+const PENDING_FLUSH_MS = 30
 /** The sidebar only appears when there is room for it and the chat. */
 const SIDEBAR_MIN_COLUMNS = 96
 const SIDEBAR_WIDTH = 26
@@ -234,11 +240,12 @@ function displayPath(path: string): string {
 /** A full-width title band: content padded to exactly `width`, then painted. */
 function band(left: string, right: string, width: number): string {
   const gap = Math.max(width - visibleWidth(left) - visibleWidth(right) - 1, 1)
-  const line = clampVisible(left + " ".repeat(gap) + right, width)
-  // A gradient across the band, so the top of the window has depth rather
-  // than being a flat strip of colour.
-  const painted = gradient(line, TITLE_GRADIENT_FROM, TITLE_GRADIENT_TO)
-  return theme.bar(padVisible(painted, width))
+  // Padded to the full width first: the gradient has to reach the last
+  // column, or the band ends one character short of the window.
+  const line = padVisible(clampVisible(left + " ".repeat(gap) + right, width), width)
+  // A gradient *behind* the band, so the text keeps the colour it was given
+  // — the wordmark's red "I" is still red.
+  return gradientBand(line, TITLE_GRADIENT_FROM, TITLE_GRADIENT_TO)
 }
 
 /**
@@ -314,6 +321,9 @@ export class TuiApp {
   /** Which reasoning blocks the user has expanded. */
   private readonly expandedReasoning = new Set<number>()
   private renderTimer?: ReturnType<typeof setTimeout>
+  private pendingFlushTimer?: ReturnType<typeof setTimeout>
+  /** The cached header, keyed by what it shows. */
+  private headerCache?: { key: string; lines: string[] }
   private spinnerTimer?: ReturnType<typeof setInterval>
   private spinnerTick = 0
   private installLine?: string
@@ -630,7 +640,37 @@ export class TuiApp {
       else this.handleChatKey(key)
       if (this.closed) return
     }
+    // A sequence that arrived in pieces is held back until the rest turns up.
+    // If nothing more comes, it was the Escape key — so give it a moment and
+    // then say so.
+    this.schedulePendingFlush()
     this.render()
+  }
+
+  /**
+   * Turns a held-back sequence into an Escape key if nothing follows it.
+   *
+   * The wait is short enough to feel instant and long enough for the second
+   * half of a split mouse report to arrive.
+   */
+  private schedulePendingFlush(): void {
+    if (this.pendingFlushTimer) {
+      clearTimeout(this.pendingFlushTimer)
+      this.pendingFlushTimer = undefined
+    }
+    if (!this.parser.hasPending) return
+    this.pendingFlushTimer = setTimeout(() => {
+      this.pendingFlushTimer = undefined
+      if (this.closed) return
+      for (const key of this.parser.flushPending()) {
+        if (this.modal) this.handleModalKey(key)
+        else if (this.overlay) this.handleOverlayKey(key)
+        else this.handleChatKey(key)
+        if (this.closed) return
+      }
+      this.render()
+    }, PENDING_FLUSH_MS)
+    if (typeof this.pendingFlushTimer.unref === "function") this.pendingFlushTimer.unref()
   }
 
   /**
@@ -4039,8 +4079,20 @@ export class TuiApp {
    * maker's lockup and the agent badge, then a quiet chrome row carrying the
    * window dots and the directory. The second row is dropped first on narrow
    * terminals, which keeps the name and the agent visible.
+   *
+   * The result is cached: the header only changes when the model, the agent
+   * or the width changes, and it is the most expensive thing on the screen —
+   * a gradient across every column.
    */
   private headerLines(width: number): string[] {
+    const key = `${width}|${this.modelRef ?? this.config.model ?? "auto"}|${this.agent.id}|${this.agents.length}|${this.scroll > 0}`
+    if (this.headerCache?.key === key) return this.headerCache.lines
+    const lines = this.buildHeaderLines(width)
+    this.headerCache = { key, lines }
+    return lines
+  }
+
+  private buildHeaderLines(width: number): string[] {
     if (width < 44) {
       return [band(` ${theme.red(sym.diamond)} ${theme.bold("IMURUN")} ${theme.dim(`v${this.version}`)}`, "", width)]
     }

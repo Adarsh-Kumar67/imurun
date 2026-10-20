@@ -92,6 +92,15 @@ export interface WalkOptions {
   accept?: (relativePath: string, absolutePath: string) => boolean
   /** How deep the walk may go. A source tree rarely needs more. */
   maxDepth?: number
+  /**
+   * How long the walk may take, in milliseconds.
+   *
+   * A directory that is not really a project — a home directory, a drive
+   * root — holds tens of thousands of files, and reading them all would
+   * stall the first turn for minutes on a slow machine. The walk stops when
+   * its budget is spent and the index is finished off on the next refresh.
+   */
+  maxDurationMs?: number
 }
 
 export interface WalkResult {
@@ -114,14 +123,17 @@ function isPermissionError(error: unknown): boolean {
  */
 export async function walkFiles(options: WalkOptions): Promise<WalkResult> {
   const { root, maxFiles = 5_000, maxFileBytes = 512 * 1024, accept, maxDepth = 24 } = options
+  const budget = options.maxDurationMs ?? 0
   const files: string[] = []
   const skipped: string[] = []
 
   // An explicit stack, so a deep tree cannot blow the call stack.
   const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }]
   const seen = new Set<string>()
+  const deadline = budget > 0 ? Date.now() + budget : 0
 
   while (queue.length > 0) {
+    if (deadline > 0 && Date.now() > deadline) break
     const current = queue.pop()!
     if (current.depth > maxDepth) continue
 

@@ -38,9 +38,32 @@ describe("KeyParser", () => {
     ])
   })
 
-  test("falls back to a bare escape for unknown sequences", () => {
+  test("a lone escape is held back, then reported as the escape key", () => {
     const parser = new KeyParser()
-    expect(parser.push("\u001b")).toEqual([{ name: "escape" }])
+    // A lone ESC might be the start of a sequence that has not arrived yet,
+    // so it waits — and is then given up on.
+    expect(parser.push("\u001b")).toEqual([])
+    expect(parser.hasPending).toBe(true)
+    expect(parser.flushPending()).toEqual([{ name: "escape" }])
+    expect(parser.hasPending).toBe(false)
+  })
+
+  test("a mouse report split across two reads is not typed into the prompt", () => {
+    const parser = new KeyParser()
+    // The first half of the sequence: nothing may be treated as text.
+    expect(parser.push("\u001b[<0;12;")).toEqual([])
+    expect(parser.hasPending).toBe(true)
+    // The rest arrives: now it is a click, not a line of gibberish.
+    const events = parser.push("7M")
+    expect(events).toEqual([
+      { mouse: { kind: "press", x: 12, y: 7, shift: false, alt: false, ctrl: false } },
+    ])
+  })
+
+  test("a cursor key split across two reads still works", () => {
+    const parser = new KeyParser()
+    expect(parser.push("\u001b[")).toEqual([])
+    expect(parser.push("A")).toEqual([{ name: "up" }])
   })
 
   test("decodes an SGR mouse press with its coordinates", () => {

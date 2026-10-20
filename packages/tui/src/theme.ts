@@ -101,24 +101,92 @@ export const theme: Theme = { ...DARK }
  *
  * A terminal cannot do glass, but it can do a gradient — and a band that
  * fades from one colour to another reads as depth rather than as a flat bar.
- * The ramp is interpolated in RGB and applied per character, so it works in
- * truecolor terminals and degrades to a single colour where 24-bit colour is
- * not available.
+ *
+ * Two things this has to get right:
+ *
+ *   1. **It must not break the text it is painting.** The line it is given
+ *      usually already carries colour — the wordmark has a red "I" and a red
+ *      "T" in it. Walking the string one character at a time would cut an
+ *      escape sequence in half, and the tail of it would appear on screen as
+ *      literal text. So escape sequences are copied whole.
+ *   2. **It must paint the background, not the foreground.** The band is a
+ *      gradient of colour *behind* the text; the text keeps the colour it
+ *      was given, which is why the red "I" is still red on the gradient.
+ *
+ * It must also be cheap: a frame is redrawn several times a second, and a
+ * wide band is hundreds of characters. The ramp is therefore computed once
+ * into a small table of ready-made escape sequences, and each character
+ * picks one — no colour maths and no chalk calls per character.
  */
-export function gradient(text: string, from: string, to: string): string {
+export function gradientBand(text: string, from: string, to: string, foreground = "#F2EDE3"): string {
   const start = hexToRgb(from)
   const end = hexToRgb(to)
   if (!start || !end) return text
-  const length = Math.max(text.length - 1, 1)
-  let out = ""
-  for (let index = 0; index < text.length; index++) {
-    const ratio = index / length
+  // A truecolor gradient needs a terminal that understands 24-bit colour.
+  // Where it does not, the band is simply the flat colour it was before.
+  if (chalk.level < 3) return text
+
+  const ink = hexToRgb(foreground)
+  const steps = 24
+  const ramp: string[] = []
+  const rampPlain: string[] = []
+  for (let step = 0; step < steps; step++) {
+    const ratio = step / (steps - 1)
     const r = Math.round(start.r + (end.r - start.r) * ratio)
     const g = Math.round(start.g + (end.g - start.g) * ratio)
     const b = Math.round(start.b + (end.b - start.b) * ratio)
-    out += chalk.rgb(r, g, b)(text[index]!)
+    const background = `\u001b[48;2;${r};${g};${b}m`
+    // The band's own foreground, for the parts that carry no colour of their own.
+    rampPlain.push(ink ? `${background}\u001b[38;2;${ink.r};${ink.g};${ink.b}m` : background)
+    // And a version without it, for the parts that do.
+    ramp.push(background)
   }
-  return out
+
+  const plain = visibleLength(text)
+  const length = Math.max(plain - 1, 1)
+  let out = ""
+  let index = 0
+  let painted = 0
+  /** True while the text is inside a run of its own colour. */
+  let styled = false
+
+  while (index < text.length) {
+    // An escape sequence is copied whole, so the styling it carries survives.
+    if (text[index] === "\u001b") {
+      const match = /^\u001b\[[0-9;]*m/.exec(text.slice(index))
+      if (match) {
+        out += match[0]
+        // A closing sequence ends the run; anything else starts or continues it.
+        styled = !/^\u001b\[(?:0|39|22|23|24|27|28|29)m$/.test(match[0])
+        index += match[0].length
+        continue
+      }
+    }
+    const step = Math.min(ramp.length - 1, Math.round((painted / length) * (ramp.length - 1)))
+    // The band's foreground is only applied where the text has none of its own.
+    out += (styled ? ramp[step]! : rampPlain[step]!) + text[index]!
+    painted++
+    index++
+  }
+  return `${out}\u001b[39m\u001b[49m`
+}
+
+/** The number of visible characters in a string. */
+function visibleLength(text: string): number {
+  let count = 0
+  let index = 0
+  while (index < text.length) {
+    if (text[index] === "\u001b") {
+      const match = /^\u001b\[[0-9;]*m/.exec(text.slice(index))
+      if (match) {
+        index += match[0].length
+        continue
+      }
+    }
+    count++
+    index++
+  }
+  return count
 }
 
 /** The gradient used for the title band: warm light into the brand red. */

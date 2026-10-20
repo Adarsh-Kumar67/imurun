@@ -29,6 +29,8 @@ const BRACKETED_PASTE_OFF = "\u001b[?2004l"
 export class Screen {
   private active = false
   private mouseActive = false
+  /** The last frame written, so only the changed rows are sent again. */
+  private lastLines: string[] = []
   private readonly dataHandlers = new Set<(chunk: string) => void>()
   private readonly resizeHandlers = new Set<(size: ScreenSize) => void>()
   private readonly handleData = (chunk: Buffer | string): void => {
@@ -36,6 +38,9 @@ export class Screen {
     for (const handler of this.dataHandlers) handler(text)
   }
   private readonly handleResize = (): void => {
+    // The window changed size, so every row is different now: the cache of
+    // the last frame is worthless and must be dropped.
+    this.lastLines = []
     const size = this.size()
     for (const handler of this.resizeHandlers) handler(size)
   }
@@ -89,6 +94,7 @@ export class Screen {
     this.active = false
     this.output.write(MOUSE_OFF + BRACKETED_PASTE_OFF + CURSOR_SHOW + ALT_SCREEN_OFF)
     this.mouseActive = false
+    this.lastLines = []
     this.input.off("data", this.handleData)
     this.output.off("resize", this.handleResize)
     if (this.input.isTTY && typeof this.input.setRawMode === "function") {
@@ -114,25 +120,44 @@ export class Screen {
   }
 
   /**
-   * Paints a full frame. Lines are padded/cleared to the terminal width, so a
-   * shorter frame never leaves stale characters behind. The cursor is placed
-   * last so the writing position never drifts.
+   * Paints a frame.
+   *
+   * Only the rows that actually changed are written. A full-screen interface
+   * that repaints every line, several times a second, asks the terminal
+   * emulator to do a great deal of work for nothing — and on a small or slow
+   * machine that is the difference between a smooth interface and one that
+   * feels stuck. Here, a spinner ticking in one corner of a wide window
+   * writes one line.
+   *
+   * Lines are padded and cleared to the terminal width, so a shorter frame
+   * never leaves stale characters behind, and the cursor is placed last so
+   * the writing position never drifts.
    */
   draw(lines: string[], cursor?: { row: number; col: number }): void {
     const { columns, rows } = this.size()
     const frame = lines.slice(0, rows)
     while (frame.length < rows) frame.push("")
 
-    let out = HOME
+    let out = ""
     for (let i = 0; i < rows; i++) {
       const line = frame[i] ?? ""
-      out += line
-      // clear the remainder of this row, then move to the next
-      out += "\u001b[K"
-      if (i < rows - 1) out += "\r\n"
+      // An unchanged row is left alone: the terminal already has it.
+      if (this.lastLines[i] === line) continue
+      // Move to the row, write it, and clear whatever was left of it.
+      out += `\u001b[${i + 1};1H${line}\u001b[K`
     }
+    this.lastLines = frame
 
-    if (cursor) {
+    if (out === "") {
+      // Nothing changed: only the cursor needs moving.
+      if (cursor) {
+        const row = Math.min(Math.max(cursor.row, 1), rows)
+        const col = Math.min(Math.max(cursor.col, 1), columns)
+        out = `\u001b[${row};${col}H`
+      } else {
+        out = CURSOR_HIDE
+      }
+    } else if (cursor) {
       const row = Math.min(Math.max(cursor.row, 1), rows)
       const col = Math.min(Math.max(cursor.col, 1), columns)
       out += `\u001b[${row};${col}H`

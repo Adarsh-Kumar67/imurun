@@ -35,6 +35,15 @@ export const RAG_FRESH_MS = 5_000
 const MAX_FILES = 3_000
 const MAX_FILE_BYTES = 400 * 1024
 const MAX_CHUNKS = 6_000
+/**
+ * How long one scan may take.
+ *
+ * The index is an optimisation: it must never be the reason a turn waits. On
+ * a directory that holds far more than a project — a home directory, a drive
+ * root — the scan gives up after a couple of seconds and the rest is picked
+ * up on the next refresh.
+ */
+const MAX_SCAN_MS = 2_500
 const MAX_INDEX_CHARS = 6 * 1024 * 1024
 const MAX_CHUNK_LINES = 60
 const MAX_CHUNK_CHARS = 1_600
@@ -500,6 +509,10 @@ export class RagIndex {
       root: this.root,
       maxFiles: this.maxFiles,
       maxFileBytes: this.maxFileBytes,
+      // A directory that is not really a project — a home directory, a drive
+      // root — holds far more files than an index needs. The walk stops when
+      // its budget is spent and the rest is picked up on the next refresh.
+      maxDurationMs: MAX_SCAN_MS,
       accept: (relative) => {
         if (isExcludedPath(relative, this.excludeGlobs)) return false
         return isIndexableFile(relative)
