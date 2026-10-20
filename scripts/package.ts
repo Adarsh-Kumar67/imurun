@@ -270,13 +270,17 @@ const manifest = {
   description: "Local-first AI coding agent — installs, manages and runs local LLMs on your own machine.",
   license: "MIT",
   author: "ImuTechz",
-  repository: "https://github.com/shubham001312/imurun",
+  // npm wants the repository as an object; a bare string is silently rewritten
+  // on publish, and the rewritten form points at the wrong place.
+  repository: { type: "git", url: "git+https://github.com/shubham001312/imurun.git" },
   homepage: "https://github.com/shubham001312/imurun#readme",
-  bugs: "https://github.com/shubham001312/imurun/issues",
+  bugs: { url: "https://github.com/shubham001312/imurun/issues" },
   // Bun is the runtime the bundle is built for; the SQLite store cannot open
   // without it, so this is a hard floor rather than a suggestion.
   engines: { bun: ">=1.2.0" },
-  bin: { imurun: "./bin/imurun.js" },
+  // No leading "./": npm drops a bin path that starts with it, and the
+  // `imurun` command then never appears on PATH after an install.
+  bin: { imurun: "bin/imurun.js" },
   files: ["bin/", "dist/", "LICENSE", "README.md"],
   keywords: ["ai", "agent", "llm", "local", "llama.cpp", "coding", "cli", "offline"],
   ...(Object.keys(optionalDependencies).length > 0 ? { optionalDependencies } : {}),
