@@ -114,8 +114,9 @@ without giving up the machine it runs on.
 ## Quickstart
 
 ```bash
-# install (needs Bun 1.2+ on PATH — https://bun.sh)
+# install — either from npm, or straight from GitHub Releases
 npm install -g imurun
+npm install -g https://github.com/ImuTechz/imurun/releases/latest/download/imurun-npm.tgz
 
 # open the interactive UI — on a fresh machine this sets up the engine and the
 # best-fitting model automatically, then you can just start talking
@@ -337,10 +338,11 @@ bun run package -- --out=dist/release
 ```
 
 Everything is staged under `dist/package/` (gitignored); the script only writes
-files — it never touches the network or the registry. `bun run package` prints
+files - it never touches the network or the registry. `bun run package` prints
 the exact `npm install -g` line for the staged build. The published version
-comes from `packages/cli/package.json`, so a release is a one-line bump. See
-[Installation](docs/installation.md).
+comes from `packages/cli/package.json`, so a release is a one-line bump.
+`bun run release` publishes the npm tarball and compiled binaries as GitHub
+release assets. See [Installation](docs/installation.md).
 
 ## Repository layout
 

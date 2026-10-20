@@ -1,0 +1,217 @@
+#!/usr/bin/env bun
+/**
+ * IMURUN GitHub release — stages the artifacts and publishes them as a release.
+ *
+ * What it does:
+ *
+ *   1. Bundles the CLI and stages the npm package (`bun run package`).
+ *   2. Compiles standalone binaries for the requested platforms.
+ *   3. Packs the staged package into `imurun-npm.tgz` (a stable asset name, so
+ *      the documented install URLs never change between versions).
+ *   4. Creates the `v<version>` release through the GitHub REST API and uploads
+ *      the tarball and every binary as assets.
+ *
+ * Credentials come from the `GH_TOKEN` (or `GITHUB_TOKEN`) environment variable
+ * and are used only for these requests — never written to disk, never logged,
+ * never placed in a URL. A classic token with the `repo` scope is enough.
+ *
+ * Usage (from the workspace root):
+ *
+ *   GH_TOKEN=... bun run release
+ *   bun run release -- --repo=ImuTechz/imurun --targets=bun-windows-x64,bun-linux-x64
+ *   bun run release -- --dry-run     # stage + pack, print the plan, touch nothing
+ */
+import { copyFile, cp, mkdir, readdir, rm, stat } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { spawnSync } from "node:child_process"
+
+const root = resolve(import.meta.dir, "..")
+const argv = process.argv.slice(2)
+const flag = (name: string): string | undefined => {
+  const withEquals = argv.find((arg) => arg.startsWith(`--${name}=`))
+  if (withEquals) return withEquals.slice(name.length + 3)
+  const index = argv.indexOf(`--${name}`)
+  return index === -1 ? undefined : (argv[index + 1] ?? "")
+}
+const has = (name: string): boolean => argv.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`))
+
+const repo = flag("repo") ?? "ImuTechz/imurun"
+const dryRun = has("dry-run")
+const targets = flag("targets") ?? "bun-windows-x64,bun-linux-x64,bun-linux-arm64,bun-darwin-x64,bun-darwin-arm64"
+const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+const api = "https://api.github.com"
+
+const manifest = await Bun.file(join(root, "packages/cli/package.json")).json()
+const version: string = manifest.version
+
+const outDir = resolve(root, "dist/package")
+const releaseDir = resolve(root, "dist/release")
+const npmDir = join(outDir, "npm/imurun")
+const binariesDir = join(outDir, "binaries")
+
+function run(command: string, args: string[], options: { cwd?: string } = {}): void {  // No shell: paths with spaces ("IMU CLI") must reach the child as one argv
+  // entry, and every command here exists as an executable (.cmd on Windows).
+  const result = spawnSync(command, args, { stdio: "inherit", cwd: options.cwd ?? root, windowsHide: true })
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} exited with ${result.status ?? "signal"}`)
+  }
+}
+
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+
+function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "imurun-release",
+    Authorization: `Bearer ${token}`,
+    ...extra,
+  }
+}
+
+async function apiRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  const isBinary = Boolean(init.body) && typeof init.body !== "string"
+  const headers: Record<string, string> = githubHeaders(isBinary ? { "Content-Type": "application/octet-stream" } : undefined)
+  return fetch(`${api}${path}`, { ...init, headers })
+}
+
+/** Release notes: the commits since the previous tag, newest first. */
+async function releaseNotes(): Promise<string> {
+  const previous = spawnSync("git", ["describe", "--tags", "--abbrev=0"], { cwd: root, encoding: "utf8" })
+  const range = previous.status === 0 ? `${previous.stdout.trim()}..HEAD` : "HEAD"
+  const log = spawnSync("git", ["log", range, "--pretty=format:%s", "-40"], { cwd: root, encoding: "utf8" })
+  const lines = (log.stdout ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("Merge "))
+    .map((line) => `- ${line}`)
+  return [
+    `IMURUN v${version}`,
+    "",
+    "Install:",
+    "",
+    "```bash",
+    "npm install -g imurun",
+    "```",
+    "",
+    "or, straight from this release:",
+    "",
+    "```bash",
+    "npm install -g https://github.com/" + repo + "/releases/download/v" + version + "/imurun-npm.tgz",
+    "```",
+    "",
+    "Standalone binaries (no Bun or npm needed) are attached below.",
+    "",
+    "## Changes",
+    "",
+    ...(lines.length > 0 ? lines : [`- IMURUN v${version}`]),
+  ].join("\n")
+}
+
+if (!token && !dryRun) {
+  console.error("No GitHub token. Set GH_TOKEN (repo scope) and run again — it is read from the")
+  console.error("environment only and is never written to disk.")
+  process.exit(1)
+}
+
+console.log(`\n▶ IMURUN v${version} → ${repo}${dryRun ? " (dry run)" : ""}\n`)
+
+console.log("▶ building and staging")
+run(process.execPath, ["run", "package", "--", "--binaries", `--targets=${targets}`])
+
+console.log("\n▶ packing the npm tarball")
+await rm(releaseDir, { recursive: true, force: true })
+const packDir = join(releaseDir, "package")
+await mkdir(packDir, { recursive: true })
+// npm's tarball format: one root folder named `package/`. Built with the
+// system tar so no shell quoting is involved (the checkout path has spaces).
+await cp(npmDir, packDir, { recursive: true })
+const tarball = join(releaseDir, "imurun-npm.tgz")
+run("tar", ["-czf", tarball, "-C", releaseDir, "package"])
+console.log(`  imurun-npm.tgz  ${((await stat(tarball)).size / 1024 / 1024).toFixed(2)} MB`)
+
+const assets: Array<{ path: string; name: string; type: string }> = [
+  { path: tarball, name: "imurun-npm.tgz", type: "application/gzip" },
+]
+if (existsSync(binariesDir)) {
+  for (const file of await readdir(binariesDir)) {
+    assets.push({ path: join(binariesDir, file), name: file, type: "application/octet-stream" })
+  }
+}
+
+console.log("\n▶ release assets")
+for (const asset of assets) {
+  const size = await stat(asset.path)
+  console.log(`  ${asset.name}  ${(size.size / 1024 / 1024).toFixed(1)} MB`)
+}
+
+if (dryRun) {
+  console.log("\ndry run — nothing was published. Remove --dry-run to publish.")
+  process.exit(0)
+}
+
+const notes = await releaseNotes()
+
+console.log("\n▶ creating the release")
+let release: { id: number; upload_url: string; html_url: string }
+const created = await apiRequest(`/repos/${repo}/releases`, {
+  method: "POST",
+  body: JSON.stringify({
+    tag_name: `v${version}`,
+    target_commitish: "main",
+    name: `IMURUN v${version}`,
+    body: notes,
+    draft: false,
+    prerelease: false,
+  }),
+})
+if (created.ok) {
+  release = (await created.json()) as { id: number; upload_url: string; html_url: string }
+} else if (created.status === 422) {
+  // The tag/release already exists: publish onto it instead of failing.
+  const existing = await apiRequest(`/repos/${repo}/releases/tags/v${version}`)
+  if (!existing.ok) {
+    console.error(`a release for v${version} exists but could not be read (${existing.status}).`)
+    process.exit(1)
+  }
+  release = (await existing.json()) as { id: number; upload_url: string; html_url: string }
+  console.log(`  release v${version} already exists — updating assets`)
+} else {
+  console.error(`could not create the release: ${created.status} ${await created.text()}`)
+  process.exit(1)
+}
+
+const uploadBase = release.upload_url.replace(/\{.*\}$/, "")
+
+for (const asset of assets) {
+  console.log(`▶ uploading ${asset.name}`)
+  // A re-run replaces an asset that is already attached.
+  const listed = await apiRequest(`/repos/${repo}/releases/${release.id}/assets?per_page=100`)
+  if (listed.ok) {
+    const existing = (await listed.json()) as Array<{ id: number; name: string }>
+    for (const item of existing) {
+      if (item.name === asset.name) {
+        await apiRequest(`/repos/${repo}/releases/assets/${item.id}`, { method: "DELETE" })
+      }
+    }
+  }
+  const body = new Uint8Array(await Bun.file(asset.path).arrayBuffer())
+  const uploaded = await fetch(`${uploadBase}?name=${encodeURIComponent(asset.name)}`, {
+    method: "POST",
+    headers: { ...githubHeaders({ "Content-Type": asset.type }), "Content-Length": String(body.byteLength) },
+    body: body,
+  })
+  if (!uploaded.ok) {
+    console.error(`  upload failed: ${uploaded.status} ${await uploaded.text()}`)
+    process.exit(1)
+  }
+  console.log(`  done`)
+}
+
+console.log(`\n✔ published ${release.html_url}`)
+console.log("\n  install with npm (needs Bun):")
+console.log(`    npm install -g imurun`)
+console.log("  or straight from this release:")
+console.log(`    npm install -g https://github.com/${repo}/releases/download/v${version}/imurun-npm.tgz`)
+console.log("  or download a standalone binary from the release page — it needs nothing else.")

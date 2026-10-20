@@ -44,9 +44,10 @@ commands, the same files under `~/.imurun`, and the same catalog of models.
 npm install -g imurun
 ```
 
-This installs the `imurun` command. The published payload is a single
-self-contained JavaScript bundle with no `node_modules`, run by a small
-launcher.
+This installs the `imurun` command on your PATH (npm's global bin directory is
+on PATH by default on every platform), so `imurun` works from any directory.
+The published payload is a single self-contained JavaScript bundle with no
+`node_modules`, run by a small launcher. Bun 1.2+ must be on PATH.
 
 Verify:
 
@@ -56,7 +57,39 @@ imurun --version
 
 which prints the version (`imurun 0.1.0` at the time of writing).
 
-## Option 2 — standalone binary
+## Option 2 — install from GitHub
+
+Everything published to npm is also attached to each
+[GitHub release](https://github.com/ImuTechz/imurun/releases), so the same
+install works without an npm account.
+
+**With npm (needs Bun 1.2+):**
+
+```bash
+npm install -g https://github.com/ImuTechz/imurun/releases/latest/download/imurun-npm.tgz
+```
+
+**Standalone binary (needs nothing else):** download the file for your platform
+from the [latest release](https://github.com/ImuTechz/imurun/releases/latest)
+and put it on your PATH:
+
+```powershell
+# Windows (PowerShell) — into a folder that is already on PATH
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\imurun" | Out-Null
+Invoke-WebRequest -Uri "https://github.com/ImuTechz/imurun/releases/latest/download/imurun-windows-x64.exe" `
+  -OutFile "$env:LOCALAPPDATA\Programs\imurun\imurun.exe"
+```
+
+```bash
+# macOS Apple Silicon / Linux x64 — into /usr/local/bin
+sudo curl -L -o /usr/local/bin/imurun \
+  https://github.com/ImuTechz/imurun/releases/latest/download/imurun-darwin-arm64   # or imurun-linux-x64
+sudo chmod +x /usr/local/bin/imurun
+```
+
+Verify with `imurun --version` exactly as above.
+
+## Option 3 — standalone binary, built from source
 
 Standalone executables are compiled with `bun build --compile`, so the runtime
 is embedded and Bun is not required. They are staged as
@@ -76,7 +109,18 @@ files; it never touches the network or the registry. `bun run package` prints th
 exact `npm install -g` line for the staged build. The published version comes
 from `packages/cli/package.json`, so a release is a one-line bump.
 
-## Option 3 — run from source
+To publish a release (npm tarball + binaries as GitHub release assets), run:
+
+```bash
+GH_TOKEN=... bun run release                      # all five platforms
+bun run release -- --dry-run                      # stage and print, publish nothing
+bun run release -- --targets=bun-windows-x64,bun-linux-x64
+```
+
+The token is read from the environment only — it is never written to disk or
+logged. The script's header comment is the full reference.
+
+## Option 4 — run from source
 
 From a checkout of the workspace:
 

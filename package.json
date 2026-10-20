@@ -13,6 +13,7 @@
     "build": "bun run scripts/build.ts",
     "package": "bun run scripts/package.ts",
     "package:binaries": "bun run scripts/package.ts -- --binaries",
+    "release": "bun run scripts/release-github.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "smoke": "bun run scripts/smoke.ts"
