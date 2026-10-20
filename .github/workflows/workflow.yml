@@ -62,6 +62,12 @@ jobs:
       - name: Publish
         if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # The distributions are built under python/, not the workspace root.
+          packages-dir: python/dist
+          # The trusted publisher on PyPI is configured for the `pypi`
+          # environment, and this workflow must use the same one.
+          environment: pypi
 
   npm:
     name: Publish to npm
@@ -106,11 +112,22 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # With a trusted publisher configured, npm accepts the OIDC
-          # credential and no token is needed. When a token secret is set it
-          # is used instead, which is the fallback for a repository that has
-          # not set up trusted publishing yet.
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::notice::No NPM_TOKEN secret - publishing with trusted publishing (OIDC)."
+          # Publishing to npm needs one of two things:
+          #   - a trusted publisher configured on npmjs.com for this
+          #     repository and this workflow file (no secret at all), or
+          #   - an NPM_TOKEN secret in the repository settings.
+          # With a token, npm uses it. Without one, npm exchanges the OIDC
+          # credential itself - which only works when the trusted publisher
+          # exists. If neither is in place the step says so and stops, rather
+          # than failing the whole release with a bare ENEEDAUTH.
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            npm publish --access public --provenance
+          elif npm publish --access public --provenance; then
+            echo "Published to npm with trusted publishing."
+          else
+            echo "::notice title=Skipped::npm could not publish."
+            echo "Configure a trusted publisher on npmjs.com for"
+            echo "  shubham001312/imurun · workflow.yml · environment npm,"
+            echo "or add an NPM_TOKEN secret to the repository. The release"
+            echo "itself is unaffected; only the npm publish is skipped."
           fi
-          npm publish --access public --provenance
