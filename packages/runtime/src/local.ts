@@ -6,7 +6,6 @@
  * client heartbeat alive while a session runs so the supervisor frees RAM as
  * soon as the client is gone.
  */
-import { basename } from "node:path"
 import type { ImurunConfig, InstalledModel } from "@imurun/schema"
 import { ensureLlamaCppEngine, listInstalled, updateInstalled } from "@imurun/modelmgr"
 import { logger } from "@imurun/util"
@@ -76,7 +75,10 @@ export function resolveLocalTarget(ref: string | undefined, installed: Installed
   }
 
   if (ref.toLowerCase().endsWith(".gguf")) {
-    const modelName = basename(ref).replace(/\.gguf$/i, "")
+    // The path may have been pasted from another machine, so both separators
+    // are honoured when taking the model name out of it.
+    const name = ref.replace(/\\/g, "/").split("/").pop() ?? ref
+    const modelName = name.replace(/\.gguf$/i, "")
     return { target: { modelName, path: ref }, modelRef: `local/${modelName}` }
   }
 

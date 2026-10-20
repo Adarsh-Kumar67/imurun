@@ -314,10 +314,16 @@ export class CardVault {
   async touch(id: string, now = NOW()): Promise<BrainCardFile | undefined> {
     const card = (await this.list()).find((entry) => entry.id === id)
     if (!card) return undefined
+    // The timestamp must move forward, even when two touches land inside the
+    // same millisecond: a card that was just used is newer than one that was
+    // not, and "newer" has to mean something in the file.
+    const previous = Date.parse(card.accessed)
+    const stamp = Date.parse(now)
+    const nextStamp = Number.isFinite(previous) && stamp <= previous ? previous + 1 : stamp
     const next: BrainCardFile = {
       ...card,
       accessCount: card.accessCount + 1,
-      accessed: now,
+      accessed: new Date(nextStamp).toISOString(),
       storedTier: promoted(card.storedTier, card.accessCount + 1),
       tier: promoted(card.storedTier, card.accessCount + 1),
     }
