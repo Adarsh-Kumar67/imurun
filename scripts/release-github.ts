@@ -334,10 +334,20 @@ if (npmToken) {
   // The registry finalises a hundred-megabyte tarball in its own time. The
   // main package waits for the executables it depends on, so an install can
   // never ask for a version that is not there yet.
-  for (const name of published) {
-    const ready = await waitForPackage(name, version, 10 * 60_000)
+  for (const [index, name] of published.entries()) {
+    let ready = await waitForPackage(name, version, 5 * 60_000)
+    if (!ready) {
+      // npm drops an upload that never finished, so it is sent again.
+      console.log(`  ${name}@${version} did not land — publishing it again`)
+      const dir = platformDirs[index]!
+      runNpm(["publish", dir, "--access", "public"], {
+        NPM_TOKEN: npmToken,
+        NPM_CONFIG_USERCONFIG: npmConfig,
+      })
+      ready = await waitForPackage(name, version, 5 * 60_000)
+    }
     if (ready) console.log(`  ${name}@${version} is on the registry`)
-    else console.error(`  ${name}@${version} is taking a while — it will be there shortly.`)
+    else console.error(`  ${name}@${version} is taking a while — the install will use the last one published.`)
   }
 
   // And only then the main package, which depends on them.

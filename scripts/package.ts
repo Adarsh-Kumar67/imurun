@@ -367,11 +367,14 @@ for (const binary of binaries) {
       2,
     ) + "\n",
   )
-  // A range, not an exact version: the registry can take minutes to finish a
-  // hundred-megabyte tarball, and a range means an install that happens
-  // before the platform package has landed still resolves to the one that
-  // has.
-  optionalDependencies[name] = `^${version}`
+  // A minor range, not an exact version.
+  //
+  // The registry can take minutes to finish a hundred-megabyte tarball, and
+  // an exact version would make an install fail on the platform whose
+  // upload had not landed yet. A range means the install always resolves:
+  // npm takes the newest executable that is actually there.
+  const [major = "0", minor = "0"] = version.split(".")
+  optionalDependencies[name] = `>=${major}.${minor}.0 <${major}.${Number(minor) + 1}.0`
 }
 
 await mkdir(join(mainPackageDir, "dist"), { recursive: true })

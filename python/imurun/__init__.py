@@ -42,7 +42,7 @@ from pathlib import Path
 
 __all__ = ["__version__", "main", "launcher_path", "download_url"]
 
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 
 #: Where the releases live. One place, so a move is a one-line change.
 REPO = "shubham001312/imurun"
