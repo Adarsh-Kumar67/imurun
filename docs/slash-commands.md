@@ -23,6 +23,7 @@ aliases.
 | `/todo` | `/todos` | Show or edit the plan the model is working through. | `/todo [list \| add <step> \| start <n> \| done <n> \| reopen <n> \| rm <n> \| clear-done]` |
 | `/prompts` | `/prompt`, `/ledger` | Every request made in this session, and whether it is done or still pending. | `/prompts [show \| open]` |
 | `/select` | `/selection` | Release the mouse so you can select and copy the text on screen. | `/select` |
+| `/update` | `/upgrade` | Check for a newer IMURUN and install it. | `/update [check]` |
 | `/clear` | — | Clear the screen. | `/clear` |
 | `/model` | — | Switch the model (opens a picker) or download more. | `/model [ref]` |
 | `/models` | — | List installed models and machine recommendations. | `/models` |

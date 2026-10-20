@@ -107,6 +107,15 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "update",
+    aliases: ["upgrade"],
+    summary: "Check for a newer IMURUN and install it",
+    usage: "/update [check]",
+    run(app, args) {
+      return app.updateCommand(args)
+    },
+  },
+  {
     name: "clear",
     summary: "Clear the screen",
     run(app) {

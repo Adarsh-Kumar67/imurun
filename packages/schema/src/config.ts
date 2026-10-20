@@ -103,6 +103,12 @@ export const TuiConfig = z.object({
   showRagSources: z.boolean().default(true),
   /** Show memory usage indicators on messages. */
   showMemoryUsage: z.boolean().default(true),
+  /**
+   * Check for a newer IMURUN when the interface opens, and say so when there
+   * is one. The install is never started on its own — the update is the
+   * user's decision.
+   */
+  autoUpdate: z.boolean().default(false),
 })
 export type TuiConfig = z.infer<typeof TuiConfig>
 

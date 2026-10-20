@@ -47,6 +47,9 @@ import {
   removeGlobalConfigEntry,
   ResearchEngine,
   restrictToolRegistry,
+  checkForUpdate,
+  runUpdate,
+  type UpdateStatus,
   subagents,
   supportsReasoningEffort,
   syncSkillPack,
@@ -455,6 +458,7 @@ export class TuiApp {
     this.ensureTick()
     void this.refreshSidebar()
     this.render()
+    void this.checkForUpdate()
 
     // Bring the model up right away, in the background, so the first message
     // answers instantly instead of waiting on a cold load.
@@ -1760,6 +1764,25 @@ export class TuiApp {
       // still call web_search itself.
       this.pushNotice(`the research engine is unavailable: ${(error as Error).message}`, "warn")
       return undefined
+    }
+  }
+
+  /**
+   * Looks for a newer IMURUN, when the user has asked to be told about one.
+   *
+   * The check is one small read of the registry, and it never installs
+   * anything on its own — it says there is an update and leaves the decision
+   * to the user, who runs `/update`.
+   */
+  private async checkForUpdate(): Promise<void> {
+    if (!this.config.tui.autoUpdate) return
+    try {
+      const status = await checkForUpdate(this.version)
+      if (status.updateAvailable && status.latest) {
+        this.pushNotice(`IMURUN ${status.latest} is available (you are on ${this.version}) \u00b7 /update installs it`, "info")
+      }
+    } catch {
+      // A registry that cannot be reached is not worth a notice.
     }
   }
 
@@ -3822,6 +3845,54 @@ export class TuiApp {
   // ── Todos ─────────────────────────────────────────────────────────────────
 
   /** `/todo` — the plan the model and the user share, with tick marks. */
+  /**
+   * `/update` — check for a newer IMURUN, and install it when asked.
+   *
+   * The check reads one small field from the registry. Nothing is installed
+   * without the user saying so, and a failed install explains what to do
+   * instead (a standalone binary or a pip install is updated its own way).
+   */
+  async updateCommand(args: string[]): Promise<void> {
+    const onlyCheck = (args[0] ?? "").toLowerCase() === "check"
+    this.pushNotice("checking for a newer IMURUN…", "info")
+
+    const status = await checkForUpdate(this.version).catch((error: Error): UpdateStatus => ({
+      current: this.version,
+      updateAvailable: false,
+      error: error.message,
+    }))
+
+    if (status.error) {
+      this.pushNotice(`could not reach the registry: ${status.error}`, "warn")
+      this.pushNotice(
+        "you can always download the newest release from github.com/ImuTechz/imurun/releases",
+        "info",
+      )
+      return
+    }
+    if (!status.updateAvailable) {
+      this.pushNotice(`you are on the newest version (${status.latest ?? this.version})`, "ok")
+      return
+    }
+    if (onlyCheck) {
+      this.pushNotice(`${status.latest} is available (you are on ${this.version}) \u00b7 /update installs it`, "info")
+      return
+    }
+
+    const answer = (await this.confirm(`install IMURUN ${status.latest}?`, "[Y/n]", ["y", "n"])).toLowerCase()
+    if (answer !== "y") {
+      this.pushNotice("left the version alone", "info")
+      return
+    }
+    this.pushNotice("installing \u2014 this takes a moment", "info")
+    const result = runUpdate(this.version)
+    if (result.ok) {
+      this.pushNotice(`${result.message} \u00b7 start IMURUN again to use it`, "ok")
+    } else {
+      this.pushNotice(result.message, "warn")
+    }
+  }
+
   /**
    * `/prompts` — every request made in this session, and where it stands.
    *

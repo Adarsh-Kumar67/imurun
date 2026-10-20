@@ -153,6 +153,7 @@ See [RAG](rag.md).
 | `theme` | `imurun-dark` \| `imurun-light` \| `none` | `imurun-dark` | Palette. `none` turns off color entirely, for logs and pipes. |
 | `showRagSources` | boolean | `true` | Name the files the index fed into the last turn, in the panel. |
 | `showMemoryUsage` | boolean | `true` | Show how many notes and sessions memory holds, in the panel. |
+| `autoUpdate` | boolean | `false` | Check for a newer IMURUN when the interface opens, and say so. Nothing is ever installed without being asked — `/update` does that. |
 
 ## `web`
 

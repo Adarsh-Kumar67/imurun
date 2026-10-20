@@ -309,14 +309,46 @@ imurun rag clear
 
 See [RAG](rag.md).
 
+## `imurun update`
+
+Check for a newer IMURUN and install it. IMURUN is published on npm, so the
+install is the one npm already knows how to do (`npm install -g imurun@latest`).
+
+```
+Usage: imurun update [check] [--yes]
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `--check` | boolean | Only say whether an update exists; do not install it. |
+
+| Subcommand | Does |
+| --- | --- |
+| `check` | The same as `--check`. |
+
+Nothing is installed unless you ask for it: the check reads one small field
+from the registry, and the install is a separate, deliberate step. If the
+install does not apply — a standalone binary, or a pip install — the message
+says so and points at the release page instead.
+
+```bash
+imurun update check
+imurun update
+```
+
+The same thing is available inside the interface as `/update`, and the
+interface can also say so on its own: set `tui.autoUpdate` to `true` in
+`imurun.json` and it will mention a new release when it opens. It still will
+not install anything without being asked.
+
 ## `imurun version` and `imurun help`
 
 ```bash
-imurun version          # prints: imurun 0.1.2
+imurun version          # prints: imurun 0.1.3
 imurun help             # the general command list
 imurun help models      # help for one command
 imurun models --help    # the same, via the command's own flag
 ```
 
 `imurun --version` and `imurun -v` print the version without dispatching a
-subcommand. Version 0.1.2 is defined in `packages/cli/src/version.ts`.
+subcommand. Version 0.1.3 is defined in `packages/cli/src/version.ts`.
