@@ -428,11 +428,11 @@ not install anything without being asked.
 ## `imurun version` and `imurun help`
 
 ```bash
-imurun version          # prints: imurun 0.1.10
+imurun version          # prints: imurun 0.1.11
 imurun help             # the general command list
 imurun help models      # help for one command
 imurun models --help    # the same, via the command's own flag
 ```
 
 `imurun --version` and `imurun -v` print the version without dispatching a
-subcommand. Version 0.1.10 is defined in `packages/cli/src/version.ts`.
+subcommand. Version 0.1.11 is defined in `packages/cli/src/version.ts`.
