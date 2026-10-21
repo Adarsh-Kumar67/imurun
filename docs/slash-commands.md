@@ -136,6 +136,14 @@ deleted. See [Memory](memory.md#the-vault--the-second-brain).
 `/runtime` (or `/runtime status`) shows whether the local runtime is running and
 its engines; `/runtime stop` stops it and frees RAM. See [Runtime](runtime.md).
 
+### `/update`
+
+`/update` checks npm and the GitHub release, says what this installation would
+run — `npm install -g imurun@latest`, a pip upgrade, a binary swap, `git pull`
+for a checkout — and asks before doing it. `/update check` (or `/update --check`)
+only reports. The same command from the shell is `imurun update`, and it has a
+`--dry-run` there. See [Upgrading](upgrading.md).
+
 ### `/copy`
 
 Getting text out of the chat. A terminal already has a selection — hold `Shift`

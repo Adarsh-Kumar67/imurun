@@ -65,12 +65,15 @@ export const uninstallCommand: Command = {
       console.log(`  ${chalk.gray("Install it again whenever you like:")} ${chalk.cyan("npm install -g imurun")}`)
       console.log(`  ${chalk.gray("Remove the data too, later:")} ${chalk.cyan("rm -rf ~/.imurun")}`)
     }
+    for (const note of result.notes) console.log(`  ${chalk.gray(note)}`)
     if (result.errors.length > 0) {
       console.log("")
       for (const error of result.errors) console.log(`  ${chalk.yellow("⚠")} ${chalk.gray(error)}`)
     }
     console.log("")
-    return result.errors.length === 0 ? 0 : 1
+    if (result.errors.length > 0) return 1
+    if (result.removed.length === 0 && result.method !== "ephemeral") return 1
+    return 0
   },
 }
 

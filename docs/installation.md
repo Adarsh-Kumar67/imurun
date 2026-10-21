@@ -241,6 +241,35 @@ Per-project state lives under `<project>/.imurun/` (`PLAN.md`, `todos.md`,
 [Local models](local-models.md#where-files-live) and
 [Configuration](configuration.md#where-config-lives).
 
+## Upgrading
+
+One command upgrades IMURUN no matter how it was installed:
+
+```bash
+imurun update                # check, then install the newest release
+imurun update --dry-run      # show exactly what this installation would run
+imurun update check          # only report whether there is a newer release
+```
+
+It detects how this copy arrived and uses that path — npm, Bun, pnpm, pip, the
+downloaded binary, or a `git pull` for a source checkout — prints the command
+before running it, and leaves your data alone. If you would rather do it by
+hand, here is the same thing per method:
+
+| Installed with | Upgrade by hand |
+| --- | --- |
+| npm | `npm install -g imurun@latest` |
+| Bun | `bun add -g imurun@latest` |
+| pnpm | `pnpm add -g imurun@latest` |
+| pip | `python -m pip install --upgrade imurun` (the launcher fetches the matching program on the next run) |
+| standalone binary | download the newest asset for your platform from the [releases page](https://github.com/shubham001312/imurun/releases/latest) over the old file |
+| source checkout | `git pull --ff-only && bun install` |
+| npx | `npx imurun@latest` (nothing to upgrade — that already runs the newest) |
+
+The version check reads the newest version from npm **and** from the GitHub
+release, and takes the newer of the two, so a copy installed from one channel
+is still told about a release that only reached the other.
+
 ## Uninstall
 
 The program and your data are two different things, and uninstalling treats
@@ -252,10 +281,11 @@ imurun uninstall --dry-run    # say what would be removed
 imurun uninstall --purge      # remove ~/.imurun too
 ```
 
-It detects how IMURUN was installed (npm, pip, or a standalone binary) and
-uses the matching uninstaller. Inside the interface, `/uninstall` does the
-same and asks twice — once for the program, once for the data, the second
-defaulting to "keep".
+It detects how IMURUN was installed (npm, Bun, pnpm, pip, or a standalone
+binary) and uses the matching uninstaller. A source checkout is left alone:
+those files are your work, not IMURUN's to delete. Inside the interface,
+`/uninstall` does the same and asks twice — once for the program, once for the
+data, the second defaulting to "keep".
 
 If you would rather do it by hand:
 

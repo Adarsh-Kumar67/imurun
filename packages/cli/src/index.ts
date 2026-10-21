@@ -20,9 +20,20 @@ import { setupCommand } from "./commands/setup"
 import { uninstallCommand } from "./commands/uninstall"
 import { deepCommand } from "./commands/deep"
 import { VERSION } from "./version"
+import { cleanupStaleExecutables, detectInstallMethod } from "@imurun/core"
 
 async function main(): Promise<number> {
   const argv = process.argv.slice(2)
+
+  // A previous self-update renamed the old program aside; this is the first
+  // run with the new one, so the file is no longer mapped and can go.
+  if (detectInstallMethod() === "binary") {
+    try {
+      cleanupStaleExecutables()
+    } catch {
+      // Leftovers cost disk space, never a working install.
+    }
+  }
 
   if (argv.includes("--version") || argv.includes("-v")) {
     console.log(`imurun ${VERSION}`)

@@ -45,6 +45,7 @@ source. You can add an online provider if you want one, but local is the default
 | [RAG](rag.md) | Understand the offline project index behind `code_search`. |
 | [Engines](engines.md) | Understand the learned decisions: research, notes, skills. |
 | [Response engine](response-engine.md) | See how IMURUN learns the answer style you want, and how to reset it. |
+| [Upgrading](upgrading.md) | Move to a newer IMURUN from npm, Bun, pnpm, pip, a binary, or a checkout. |
 | [Permissions](permissions.md) | Control what runs without asking. |
 
 ## The numbers in this documentation

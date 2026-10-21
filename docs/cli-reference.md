@@ -386,37 +386,51 @@ imurun uninstall --purge      # remove ~/.imurun as well
 | `--yes`, `-y` | boolean | Do not ask for confirmation. |
 | `--dry-run` | boolean | Say what would be removed, and change nothing. |
 
-How the program was installed is detected (npm, pip, or a standalone binary),
-so the right uninstaller is used. It is safe to run twice. The same thing is
-available inside the interface as `/uninstall`, which asks twice: once to
-remove the program, and once — separately, defaulting to no — about the data.
+How the program was installed is detected (npm, Bun, pnpm, pip, a standalone
+binary or a source checkout), so the right uninstaller is used. A source
+checkout is never deleted — it is your work. It is safe to run twice. The same
+thing is available inside the interface as `/uninstall`, which asks twice: once
+to remove the program, and once — separately, defaulting to no — about the
+data.
 
 ## `imurun update`
 
-Check for a newer IMURUN and install it. IMURUN is published on npm, so the
-install is the one npm already knows how to do (`npm install -g imurun@latest`).
+Check for a newer IMURUN and install it, **however this copy was installed**.
 
 ```
-Usage: imurun update [check] [--yes]
+Usage: imurun update [check] [--yes] [--dry-run]
 ```
 
 | Option | Type | Description |
 | --- | --- | --- |
 | `--check` | boolean | Only say whether an update exists; do not install it. |
+| `--yes`, `-y` | boolean | Install without asking. |
+| `--dry-run` | boolean | Show the command or download this installation would use, and change nothing. |
 
 | Subcommand | Does |
 | --- | --- |
 | `check` | The same as `--check`. |
 
-Nothing is installed unless you ask for it: the check reads one small field
-from the registry, and the install is a separate, deliberate step. The update
-uses the tool that installed IMURUN in the first place — `npm` for a global
-install, `pip` for a Python one — so it never leaves two copies behind. If
-the install does not apply — a standalone binary — the message says so and
-points at the release page instead.
+Nothing is installed unless you ask for it: the check reads one small version
+field from npm and one from the GitHub release, and the install is a separate,
+deliberate step. The update uses the tool that installed IMURUN in the first
+place, so it never leaves two copies behind:
+
+| Installed with | `imurun update` runs |
+| --- | --- |
+| npm | `npm install -g imurun@latest` (or the release tarball if the registry is unreachable) |
+| Bun / pnpm | `bun add -g imurun@latest` / `pnpm add -g imurun@latest` |
+| pip | `python -m pip install --upgrade imurun`, then the launcher downloads the matching program on its next start |
+| a downloaded binary | the release asset for this platform, swapped in place |
+| a source checkout | `git pull --ff-only` and `bun install` in the checkout |
+| npx | nothing is installed; it points at `npx imurun@latest` instead |
+
+The command and the detected method are printed before anything runs, and
+`--dry-run` prints them without touching the disk.
 
 ```bash
 imurun update check
+imurun update --dry-run
 imurun update
 ```
 
@@ -424,6 +438,9 @@ The same thing is available inside the interface as `/update`, and the
 interface can also say so on its own: set `tui.autoUpdate` to `true` in
 `imurun.json` and it will mention a new release when it opens. It still will
 not install anything without being asked.
+
+There is more on the upgrade paths, and what happens to data, in
+[Upgrading](upgrading.md).
 
 ## `imurun version` and `imurun help`
 

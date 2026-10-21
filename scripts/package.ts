@@ -176,9 +176,12 @@ function findBun() {
 }
 
 const args = process.argv.slice(2)
+// The program is told how it was installed, so \`imurun update\` uses npm
+// rather than working it out from the path.
+const env = { ...process.env, IMURUN_INSTALL: "npm" }
 const binary = nativeBinary()
 if (binary) {
-  const child = spawnSync(binary, args, { stdio: "inherit" })
+  const child = spawnSync(binary, args, { stdio: "inherit", env })
   if (child.error) {
     console.error(\`  Could not run the IMURUN executable: \${child.error.message}\`)
     process.exit(1)
@@ -197,6 +200,7 @@ for (const candidate of findBun()) {
   const child = spawnSync(candidate.command, [bundle, ...args], {
     stdio: candidate.shell ? ["inherit", "inherit", "ignore"] : "inherit",
     shell: candidate.shell,
+    env,
   })
   if (!child.error) {
     // A shell reports "not found" as a status of 127 or 9009, not as an

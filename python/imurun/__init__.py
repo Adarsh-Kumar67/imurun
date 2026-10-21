@@ -107,6 +107,67 @@ def launcher_path() -> Path:
     return cache_dir() / binary_name()
 
 
+def version_stamp() -> Path:
+    """The file that records which launcher fetched the cached program."""
+    return cache_dir() / f"{binary_name()}.version"
+
+
+def setup_stamp() -> Path:
+    """The file that records which launcher already set the machine up."""
+    return cache_dir() / "setup.done"
+
+
+def _setup_is_done() -> bool:
+    try:
+        return setup_stamp().read_text(encoding="utf-8").strip() == __version__
+    except OSError:
+        return False
+
+
+def _mark_setup_done() -> None:
+    try:
+        setup_stamp().parent.mkdir(parents=True, exist_ok=True)
+        setup_stamp().write_text(f"{__version__}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_stamp() -> str | None:
+    try:
+        text = version_stamp().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def _write_stamp() -> None:
+    try:
+        version_stamp().parent.mkdir(parents=True, exist_ok=True)
+        version_stamp().write_text(f"{__version__}\n", encoding="utf-8")
+    except OSError:
+        # The next run will ask the program instead; nothing breaks.
+        pass
+
+
+def _reports_version(path: Path) -> str | None:
+    """The version a cached program says it is, or None when it cannot say."""
+    try:
+        result = subprocess.run(
+            [str(path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = (result.stdout or "").strip().splitlines()
+    if not lines:
+        return None
+    first = lines[0].strip()
+    return first[len("imurun ") :].strip() if first.startswith("imurun ") else None
+
+
 def _chmod_executable(path: Path) -> None:
     """Make the file runnable. A no-op on Windows, where the bit means nothing."""
     if is_windows():
@@ -161,33 +222,63 @@ def download_executable(destination: Path, url: str | None = None) -> Path:
         print(file=sys.stderr)
     _chmod_executable(partial)
     partial.replace(destination)
+    _write_stamp()
     return destination
 
 
 def ensure_executable() -> Path:
-    """Return the cached executable, downloading it the first time."""
+    """Return the cached executable that matches this launcher.
+
+    The cache is shared between launcher versions, so a ``pip install
+    --upgrade`` must not keep running the program the previous launcher
+    downloaded. A stamp records what was fetched; without one (an older
+    launcher wrote the cache), the program itself is asked. A refresh that
+    cannot finish falls back to the cached copy: an old program that runs is
+    better than no program at all.
+    """
     path = launcher_path()
-    if path.exists():
+    if not path.exists():
+        return download_executable(path)
+
+    stamped = _read_stamp()
+    if stamped == __version__:
         return path
-    return download_executable(path)
+
+    if stamped is None and _reports_version(path) == __version__:
+        _write_stamp()
+        return path
+
+    print(
+        f"  IMURUN {__version__} is installed; fetching the matching program…",
+        file=sys.stderr,
+    )
+    try:
+        return download_executable(path)
+    except (SystemExit, OSError):
+        print(
+            "  Could not fetch it; using the program that is already here.",
+            file=sys.stderr,
+        )
+        return path
 
 
-def _run_setup(executable: Path) -> int:
+def _run_setup(executable: Path) -> bool:
     """
     Set the machine up on the first run.
 
     The engine and a model that fits are installed here, so a fresh install is
-    ready to answer a question rather than half-installed. Any failure is
-    reported and ignored: the program itself still runs.
+    ready to answer a question rather than half-installed. A failure is
+    reported and ignored: the program itself still runs, and the next run
+    tries again, because nothing was recorded as done.
     """
     if os.environ.get("IMURUN_SKIP_SETUP") == "1":
-        return 0
+        return False
     try:
         result = subprocess.run([str(executable), "setup", "--quiet"], check=False)
-        return result.returncode
+        return result.returncode == 0
     except OSError as error:
         print(f"  The automatic setup did not run: {error}", file=sys.stderr)
-        return 1
+        return False
 
 
 def _latest_pypi_version(timeout: float = 4.0) -> str | None:
@@ -220,7 +311,7 @@ def _report_newer_version() -> None:
         file=sys.stderr,
     )
     print(
-        "  To update:  python -m pip install --upgrade imurun",
+        "  To update:  imurun update   (or: python -m pip install --upgrade imurun)",
         file=sys.stderr,
     )
 
@@ -245,9 +336,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Website: https://imutechz.in")
         return 0
 
-    # The program is told how it was installed, so an update uses the right
-    # tool: pip here, npm for a global install.
+    # The program is told how it was installed, and with which interpreter, so
+    # an update uses the right tool: pip here, npm for a global install.
     os.environ.setdefault("IMURUN_INSTALL", "pip")
+    os.environ.setdefault("IMURUN_PYTHON", sys.executable)
 
     executable = ensure_executable()
     _report_newer_version()
@@ -259,9 +351,9 @@ def main(argv: list[str] | None = None) -> int:
         return _run_bun(local, args)
 
     # The first run sets the machine up: the engine and a model that fits it.
-    if not launcher_path().exists() or os.environ.get("IMURUN_SETUP_DONE") != "1":
-        _run_setup(executable)
-        os.environ["IMURUN_SETUP_DONE"] = "1"
+    # The marker means an upgrade checks once, not on every single run.
+    if not _setup_is_done() and _run_setup(executable):
+        _mark_setup_done()
 
     return _run(executable, args)
 

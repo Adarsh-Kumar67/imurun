@@ -52,6 +52,10 @@ import {
   restrictToolRegistry,
   checkForUpdate,
   runUpdate,
+  planUpdate,
+  describeCommand,
+  probeInstallMethod,
+  RELEASES_PAGE,
   uninstall,
   describeInstallMethod,
   detectInstallMethod,
@@ -4379,28 +4383,45 @@ export class TuiApp {
 
     if (status.error) {
       this.pushNotice(`could not reach the registry: ${status.error}`, "warn")
-      this.pushNotice(
-        "you can always download the newest release from github.com/ImuTechz/imurun/releases",
-        "info",
-      )
+      this.pushNotice(`you can always download the newest release from ${RELEASES_PAGE}`, "info")
       return
     }
     if (!status.updateAvailable) {
       this.pushNotice(`you are on the newest version (${status.latest ?? this.version})`, "ok")
       return
     }
+
+    // How this copy was installed decides the update: npm, pip, a binary, a
+    // checkout or npx. Say which, so the update is never a surprise command.
+    const detected = detectInstallMethod()
+    const method = detected === "unknown" ? probeInstallMethod() : detected
+    const plan = planUpdate(this.version, { method, latest: status.latest })
+    const how = describeCommand(plan.command) ?? plan.download?.url
+
     if (onlyCheck) {
       this.pushNotice(`${status.latest} is available (you are on ${this.version}) \u00b7 /update installs it`, "info")
+      if (how) this.pushNotice(`this installation (${describeInstallMethod(method)}) updates with: ${how}`, "info")
+      return
+    }
+    if (plan.kind === "manual") {
+      this.pushNotice(plan.manual ?? plan.summary, "info")
       return
     }
 
-    const answer = (await this.confirm(`install IMURUN ${status.latest}?`, "[Y/n]", ["y", "n"])).toLowerCase()
+    const answer = (
+      await this.confirm(
+        `install IMURUN ${status.latest}? (${describeInstallMethod(method)})`,
+        "[Y/n]",
+        ["y", "n"],
+      )
+    ).toLowerCase()
     if (answer !== "y") {
       this.pushNotice("left the version alone", "info")
       return
     }
-    this.pushNotice("installing \u2014 this takes a moment", "info")
-    const result = runUpdate(this.version)
+    if (how) this.pushNotice(`running: ${how}`, "info")
+    else this.pushNotice("installing \u2014 this takes a moment", "info")
+    const result = await runUpdate(this.version, { method, latest: status.latest })
     if (result.ok) {
       this.pushNotice(`${result.message} \u00b7 start IMURUN again to use it`, "ok")
     } else {
@@ -4417,7 +4438,8 @@ export class TuiApp {
    * labelled question — about the data.
    */
   async uninstallCommand(): Promise<void> {
-    const method = detectInstallMethod()
+    const detected = detectInstallMethod()
+    const method = detected === "unknown" ? probeInstallMethod() : detected
     this.pushNotice(`IMURUN is installed with ${describeInstallMethod(method)}`, "info")
 
     const first = (await this.confirm("remove IMURUN from this machine?", "[y/N]", ["y", "n"])).toLowerCase()
@@ -4448,7 +4470,12 @@ export class TuiApp {
     const result = uninstall({ purge })
     for (const item of result.removed) this.pushNotice(`removed: ${item}`, "warn")
     for (const item of result.kept) this.pushNotice(`kept: ${item}`, "info")
+    for (const note of result.notes) this.pushNotice(note, "info")
     for (const error of result.errors) this.pushNotice(error, "warn")
+    if (result.removed.length === 0) {
+      this.pushNotice("IMURUN is still installed", "info")
+      return
+    }
     this.pushNotice("closing IMURUN now", "ok")
     await new Promise((resolve) => setTimeout(resolve, 600))
     await this.shutdown(0)

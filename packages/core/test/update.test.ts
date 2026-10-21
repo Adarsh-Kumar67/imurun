@@ -82,3 +82,50 @@ describe("checkForUpdate", () => {
     expect(status.error).toContain("did not name a version")
   })
 })
+
+/** One fake fetch that answers npm and GitHub differently. */
+function channelFetch(replies: { npm?: string | number; github?: string | number }): typeof fetch {
+  return (async (url: string | URL | Request) => {
+    const target = String(url)
+    const which = target.includes("registry.npmjs.org") ? "npm" : "github"
+    const reply = replies[which]
+    if (reply === undefined) throw new Error("offline")
+    if (typeof reply === "number") return new Response("nope", { status: reply })
+    const body = which === "npm" ? { version: reply } : { tag_name: `v${reply}` }
+    return new Response(JSON.stringify(body))
+  }) as unknown as typeof fetch
+}
+
+describe("checkForUpdate across both channels", () => {
+  test("the newer of the two answers wins, and says where it came from", async () => {
+    const status = await checkForUpdate("0.1.0", {
+      fetchImpl: channelFetch({ npm: "0.2.0", github: "0.2.1" }),
+    })
+    expect(status.latest).toBe("0.2.1")
+    expect(status.channel).toBe("github")
+    expect(status.updateAvailable).toBe(true)
+  })
+
+  test("a blocked registry still finds the release on GitHub", async () => {
+    const status = await checkForUpdate("0.1.0", {
+      fetchImpl: channelFetch({ github: "0.2.0" }),
+    })
+    expect(status.latest).toBe("0.2.0")
+    expect(status.updateAvailable).toBe(true)
+  })
+
+  test("a stale GitHub release does not hide a newer npm package", async () => {
+    const status = await checkForUpdate("0.1.0", {
+      fetchImpl: channelFetch({ npm: "0.2.0", github: "0.1.5" }),
+    })
+    expect(status.latest).toBe("0.2.0")
+    expect(status.channel).toBe("npm")
+  })
+
+  test("both channels down is one message naming both", async () => {
+    const status = await checkForUpdate("0.1.0", { fetchImpl: channelFetch({}) })
+    expect(status.updateAvailable).toBe(false)
+    expect(status.error).toContain("registry")
+    expect(status.error).toContain("GitHub")
+  })
+})

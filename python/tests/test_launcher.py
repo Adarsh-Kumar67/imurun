@@ -231,5 +231,114 @@ class EntryPointTests(unittest.TestCase):
             imurun.urllib.request.urlopen = original  # type: ignore[assignment]
 
 
+class UpgradeTests(unittest.TestCase):
+    """
+    A pip upgrade must run the program that matches the new launcher.
+
+    The cache is shared between launcher versions, so without a stamp the old
+    download would happily keep running. These tests cover every way that
+    decision can go: a matching stamp, an old stamp, no stamp at all, and a
+    refresh that cannot finish.
+    """
+
+    def setUp(self) -> None:
+        self.home = tempfile.TemporaryDirectory()
+        os.environ["IMURUN_HOME"] = self.home.name
+        self.saved_download = imurun.download_executable
+        self.saved_reports = imurun._reports_version
+
+    def tearDown(self) -> None:
+        imurun.download_executable = self.saved_download  # type: ignore[assignment]
+        imurun._reports_version = self.saved_reports  # type: ignore[assignment]
+        del os.environ["IMURUN_HOME"]
+        self.home.cleanup()
+
+    def cache_program(self, stamp: str | None) -> Path:
+        path = imurun.launcher_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"MZ" + b"\x00" * 128)
+        if stamp is not None:
+            imurun.version_stamp().write_text(f"{stamp}\n", encoding="utf-8")
+        return path
+
+    def count_downloads(self) -> list[Path]:
+        calls: list[Path] = []
+
+        def fake(destination: Path, url: str | None = None) -> Path:  # noqa: ANN202
+            calls.append(destination)
+            return destination
+
+        imurun.download_executable = fake  # type: ignore[assignment]
+        return calls
+
+    def test_a_stamped_cache_is_used_without_downloading(self) -> None:
+        path = self.cache_program(imurun.__version__)
+        calls = self.count_downloads()
+        self.assertEqual(imurun.ensure_executable(), path)
+        self.assertEqual(calls, [])
+
+    def test_a_stamp_from_another_version_is_refetched(self) -> None:
+        self.cache_program("0.0.1")
+        calls = self.count_downloads()
+        imurun.ensure_executable()
+        self.assertEqual(len(calls), 1)
+
+    def test_without_a_stamp_the_program_is_asked_what_it_is(self) -> None:
+        self.cache_program(None)
+        imurun._reports_version = lambda path: imurun.__version__  # type: ignore[assignment]
+        calls = self.count_downloads()
+        imurun.ensure_executable()
+        self.assertEqual(calls, [])
+        self.assertEqual(imurun._read_stamp(), imurun.__version__)
+
+    def test_without_a_stamp_an_old_program_is_refetched(self) -> None:
+        self.cache_program(None)
+        imurun._reports_version = lambda path: "0.0.1"  # type: ignore[assignment]
+        calls = self.count_downloads()
+        imurun.ensure_executable()
+        self.assertEqual(len(calls), 1)
+
+    def test_a_refresh_that_cannot_finish_keeps_the_cached_program(self) -> None:
+        path = self.cache_program("0.0.1")
+
+        def broken(destination: Path, url: str | None = None) -> Path:  # noqa: ANN202
+            raise SystemExit("offline")
+
+        imurun.download_executable = broken  # type: ignore[assignment]
+        self.assertEqual(imurun.ensure_executable(), path)
+
+    def test_a_lock_error_is_also_survivable(self) -> None:
+        path = self.cache_program("0.0.1")
+
+        def locked(destination: Path, url: str | None = None) -> Path:  # noqa: ANN202
+            raise OSError("the file is in use")
+
+        imurun.download_executable = locked  # type: ignore[assignment]
+        self.assertEqual(imurun.ensure_executable(), path)
+
+    def test_the_download_records_which_launcher_fetched_it(self) -> None:
+        destination = imurun.launcher_path()
+        source = Path(self.home.name) / "payload.bin"
+        source.write_bytes(b"imurun-binary-bytes")
+
+        original = imurun.urllib.request.urlopen
+        imurun.urllib.request.urlopen = (  # type: ignore[assignment]
+            lambda url, timeout=0: FakeResponse(source.read_bytes())
+        )
+        try:
+            imurun.download_executable(destination, "https://example.invalid/payload")
+        finally:
+            imurun.urllib.request.urlopen = original  # type: ignore[assignment]
+
+        self.assertEqual(imurun._read_stamp(), imurun.__version__)
+
+    def test_setup_runs_once_per_launcher_version(self) -> None:
+        self.assertFalse(imurun._setup_is_done())
+        imurun._mark_setup_done()
+        self.assertTrue(imurun._setup_is_done())
+        imurun.setup_stamp().write_text("0.0.1\n", encoding="utf-8")
+        self.assertFalse(imurun._setup_is_done())
+
+
 if __name__ == "__main__":
     unittest.main()
