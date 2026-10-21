@@ -138,9 +138,13 @@ def load_model() -> Any:
 
         reason = _import_error()
         if reason:
-            raise RuntimeError(
-                f"{reason}. Install the deep engine with: pip install airllm"
-            )
+            message = f"{reason}. Install the deep engine with: pip install airllm"
+            # /health is what the interface polls while it waits, so a missing
+            # engine has to be visible there too - not only in one failed reply.
+            STATE["stage"] = "error"
+            STATE["error"] = message
+            STATE["detail"] = message
+            raise RuntimeError(message)
 
         STATE["stage"] = "loading"
         STATE["detail"] = f"loading {MODEL['repo']}"

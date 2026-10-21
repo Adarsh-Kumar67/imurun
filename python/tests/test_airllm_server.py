@@ -126,9 +126,43 @@ class ServerTest(unittest.TestCase):
             self.get("/nope")
         self.assertEqual(caught.exception.code, 404)
 
+    def test_a_failed_generation_is_a_json_error_the_client_can_show(self) -> None:
+        def boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("AirLLM is not importable: No module named 'airllm'")
+
+        airllm_server.generate = boom  # type: ignore[assignment]
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.post("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(caught.exception.code, 500)
+        body = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertIn("AirLLM is not importable", body["error"]["message"])
+
     def test_unload_releases_the_model(self) -> None:
         self.post("/unload", {})
         self.assertIsNone(airllm_server.MODEL["loaded"])
+
+
+class EngineErrorTest(unittest.TestCase):
+    """A missing deep engine is reported where the interface looks for it."""
+
+    def test_the_import_failure_reaches_health_and_the_reply(self) -> None:
+        saved_error = airllm_server._import_error
+        saved_loaded = airllm_server.MODEL["loaded"]
+        saved_state = dict(airllm_server.STATE)
+        airllm_server._import_error = lambda: "AirLLM is not importable: No module named 'airllm'"
+        airllm_server.MODEL["loaded"] = None
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                airllm_server.load_model()
+            self.assertIn("pip install airllm", str(caught.exception))
+            self.assertEqual(airllm_server.STATE["stage"], "error")
+            self.assertIn("pip install airllm", airllm_server.STATE["error"])
+            self.assertTrue(airllm_server.STATE["detail"])
+        finally:
+            airllm_server._import_error = saved_error  # type: ignore[assignment]
+            airllm_server.MODEL["loaded"] = saved_loaded
+            airllm_server.STATE.clear()
+            airllm_server.STATE.update(saved_state)
 
 
 class ProgressTest(unittest.TestCase):
