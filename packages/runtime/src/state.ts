@@ -15,6 +15,8 @@ export interface RuntimeState {
   port: number
   pid?: number
   model?: string
+  /** Original weights for the deep engine (Hugging Face repo or directory). */
+  modelRepo?: string
   /** Context window the engine was started with, in tokens. */
   contextSize?: number
   /** RoPE method applied to reach it (\"yarn\" / \"linear\"), when scaling is on. */

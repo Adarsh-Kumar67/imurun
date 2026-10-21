@@ -35,6 +35,7 @@ source. You can add an online provider if you want one, but local is the default
 | [Configuration](configuration.md) | Edit `imurun.json` and know every field's type and default. |
 | [Models](models.md) | Browse the bundled catalog and understand recommendations. |
 | [Local models](local-models.md) | Understand hardware detection, engine choice, install flow, and storage. |
+| [Deep models](deep-models.md) | Run a model larger than memory — AirLLM streams it from disk, slowly. |
 | [Runtime](runtime.md) | Understand the inference daemon, idle unload, and context sizing. |
 | [Providers](providers.md) | Add an online provider, or point IMURUN at a compatible endpoint. |
 | [Agents](agents.md) | Use and write working modes with their own prompt and tools. |
@@ -43,6 +44,7 @@ source. You can add an online provider if you want one, but local is the default
 | [Memory](memory.md) | Understand durable notes, session digests, and the progress ledger. |
 | [RAG](rag.md) | Understand the offline project index behind `code_search`. |
 | [Engines](engines.md) | Understand the learned decisions: research, notes, skills. |
+| [Response engine](response-engine.md) | See how IMURUN learns the answer style you want, and how to reset it. |
 | [Permissions](permissions.md) | Control what runs without asking. |
 
 ## The numbers in this documentation
@@ -52,9 +54,9 @@ These counts were read directly from the source at version 0.1.10.
 | Thing | Count | Where it is defined |
 | --- | --- | --- |
 | Packages | 7 | `packages/*` |
-| Tools in the base registry | 15 | `packages/core/src/tool/registry.ts` |
-| Tools in the interactive UI | 16 | base registry plus `task`, added in `packages/tui/src/app.ts` |
-| Slash commands | 29 | `packages/tui/src/commands.ts` |
+| Tools in the base registry | 16 | `packages/core/src/tool/registry.ts` |
+| Tools in the interactive UI | 17 | base registry plus `task`, added in `packages/tui/src/app.ts` |
+| Slash commands | 33 | `packages/tui/src/commands.ts` |
 | CLI subcommands | 12 | `packages/cli/src/index.ts` |
 | Provider presets | 11 | `packages/core/src/provider/presets.ts` |
 | Catalog models | 16 | `packages/modelmgr/src/registry/catalog.ts` |

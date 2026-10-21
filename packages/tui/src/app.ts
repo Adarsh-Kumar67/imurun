@@ -37,6 +37,9 @@ import {
   loadSkills,
   patchGlobalConfig,
   planCounts,
+  planHistoryChars,
+  planCompaction,
+  DEFAULT_CONTEXT_WINDOW,
   planPath,
   planStoreFor,
   primaryAgents,
@@ -49,6 +52,9 @@ import {
   restrictToolRegistry,
   checkForUpdate,
   runUpdate,
+  uninstall,
+  describeInstallMethod,
+  detectInstallMethod,
   type UpdateStatus,
   subagents,
   supportsReasoningEffort,
@@ -56,12 +62,19 @@ import {
   todoCounts,
   todoGlyph,
   todoStoreFor,
+  ResponseEngine,
+  loadResponseProfile,
+  saveResponseProfile,
+  resetResponseProfile,
+  messageText,
 } from "@imurun/core"
 import type {
   AgentEvent,
   PermissionRequest,
   Plan,
   ProviderPreset,
+  RefineTurn,
+  ResponseProfile,
   SkillDefinition,
   SubagentRequest,
   SubagentResult,
@@ -72,14 +85,18 @@ import { CardVault, formatHits } from "@imurun/core"
 import {
   CATALOG,
   createInstallRenderer,
+  DEEP_MODELS,
+  airllmVenvPython,
+  ensureAirllmEngine,
   fittingModels,
+  quickStartModels,
   getCatalogModel,
   installModel,
   listInstalled,
   loadHardware,
   removeInstalled,
 } from "@imurun/modelmgr"
-import { RuntimeManager, activeHeartbeats, describeContext, ensureLocalRuntime, findInstalled, resolveLocalTarget } from "@imurun/runtime"
+import { RuntimeManager, activeHeartbeats, describeContext, ensureLocalRuntime, findInstalled, probeAirllm, resolveLocalTarget } from "@imurun/runtime"
 import type { LocalSession } from "@imurun/runtime"
 import type {
   AgentDefinition,
@@ -329,6 +346,17 @@ export class TuiApp {
   private installLine?: string
   /** Set while the local engine cold-starts; drives the boot card. */
   private modelBoot?: { model: string; startedAt: number }
+  /**
+   * A live line about the engine itself: the deep engine loading layers, or
+   * generating in one pass. It is what makes a two-minute wait legible.
+   */
+  private engineNote?: string
+  private enginePoll?: ReturnType<typeof setInterval>
+  /** The learned answer-style profile and its invisible background refiner. */
+  private response?: ResponseEngine
+  private responseModelRef?: string
+  private responseLoading?: Promise<ResponseEngine | undefined>
+  private responseSaveTimer?: ReturnType<typeof setTimeout>
 
   // ── input state ──
   private input = ""
@@ -355,6 +383,14 @@ export class TuiApp {
   private readonly queue = new MessageQueue()
   private agentSwitch?: { from: string; to: string; startedAt: number }
   private contextUsed = 0
+  /** The last real prompt size the engine reported, in tokens. */
+  private contextMeasured = 0
+  /** Message count when that measurement was taken. */
+  private contextMeasuredAt = -1
+  /** Characters the assistant has streamed since the last step ended. */
+  private contextLiveChars = 0
+  /** True while the panel's figure is an estimate, not the engine's count. */
+  private contextIsEstimate = true
   /** The active model's context window in tokens; undefined until it is known. */
   private contextMax: number | undefined
   /** Windows learned from providers that publish them, keyed "provider/model". */
@@ -1407,11 +1443,20 @@ export class TuiApp {
           break
         case "text":
           this.appendAssistant(event.delta)
+          // The answer becomes part of the next request, so the panel grows as
+          // it is written. Recomputing every delta would be wasteful; every
+          // few hundred characters is enough to look alive.
+          this.contextLiveChars += event.delta.length
+          if (this.contextLiveChars % 400 < event.delta.length) {
+            this.recomputeContext()
+            this.scheduleRender()
+          }
           break
         case "text-reset":
           // Text already on screen turned out to be part of a tool call; take it
           // back rather than leaving a half-written JSON blob in the transcript.
           this.resetAssistant(event.text)
+          this.contextLiveChars = Math.max(0, this.contextLiveChars - event.text.length)
           break
         case "reasoning":
           this.appendReasoning(event.delta)
@@ -1425,14 +1470,38 @@ export class TuiApp {
           this.ragSources = event.hits
           this.scheduleRender()
           break
-        case "research":
-          // The web search that ran before the answer. The sources are named
-          // in the transcript, so a cited fact can be traced back to a page.
-          this.pushNotice(
-            `researched ${event.sources.length} source${event.sources.length === 1 ? "" : "s"} \u00b7 ${event.queries.join(" \u00b7 ")}`,
-            "info",
-          )
+        case "research": {
+          // The web search that ran before the answer. It is one collapsed
+          // line - research is context, not the conversation - and a click
+          // opens the queries and the pages, so a cited fact can be traced.
+          const count = event.sources.length
+          const first = event.queries[0]
+          const label = `researched ${count} source${count === 1 ? "" : "s"}${first ? ` \u00b7 ${first}` : ""}`
+          const detail: string[] = []
+          if (event.queries.length > 0) {
+            detail.push("Queries")
+            for (const query of event.queries) detail.push(`  \u00b7 ${query}`)
+          }
+          if (count > 0) {
+            detail.push("")
+            detail.push("Sources")
+            event.sources.forEach((source, index) => {
+              detail.push(`  [${index + 1}] ${source.title || source.url}`)
+              detail.push(`      ${source.url}`)
+            })
+          }
+          this.pushBlock({
+            kind: "reasoning",
+            category: "search",
+            label,
+            text: detail.join("\n"),
+            expanded: false,
+            live: false,
+            seconds: 0,
+          })
+          this.scheduleRender()
           break
+        }
         case "research-claim":
           this.pushNotice(
             `checking ${event.claims.length} claim${event.claims.length === 1 ? "" : "s"} against the sources`,
@@ -1452,6 +1521,18 @@ export class TuiApp {
           this.skillChip = { name: event.name, at: Date.now() }
           this.scheduleRender()
           break
+        case "step-end":
+          // What the engine says it just sent is the only honest measure of
+          // the window: it already includes the system prompt, the tools and
+          // the whole history, exactly as the provider counted them.
+          if (event.usage && event.usage.inputTokens > 0) {
+            this.contextMeasured = event.usage.inputTokens + event.usage.outputTokens
+            this.contextMeasuredAt = this.sessions.getMessages(this.session.id).length
+            this.contextLiveChars = 0
+            this.recomputeContext()
+            this.scheduleRender()
+          }
+          break
         case "compacted":
           if (event.droppedMessages > 0 || event.reason !== "budget") {
             this.pushNotice(
@@ -1460,6 +1541,11 @@ export class TuiApp {
               "info",
             )
           }
+          // The measurement described the history before the fold; it no
+          // longer does, so the panel goes back to the estimate.
+          this.contextMeasured = 0
+          this.recomputeContext()
+          this.scheduleRender()
           break
         case "continuation":
           this.pushNotice(`output limit reached \u2014 asking the model to continue where it stopped`, "warn")
@@ -1543,6 +1629,10 @@ export class TuiApp {
     }
 
     try {
+      // The answer style is part of the request, not a setting: a short
+      // section the model reads before it writes. It is loaded once and
+      // updated in the background.
+      const responseEngine = await this.ensureResponseEngine()
       const agent = new Agent({
         sessions: this.sessions,
         providers: this.providers,
@@ -1565,6 +1655,7 @@ export class TuiApp {
         signal: controller.signal,
         contextWindow: this.contextMax,
         tightContext: this.compactBudget,
+        extraSystemSections: responseEngine?.directive ? [responseEngine.directive] : undefined,
         onEvent,
       })
       this.finalizeStreaming()
@@ -1575,6 +1666,13 @@ export class TuiApp {
           `${result.steps} step${result.steps === 1 ? "" : "s"} \u00b7 ` +
           `${usage.inputTokens}+${usage.outputTokens} tokens \u00b7 ${formatDuration(Date.now() - started)} \u00b7 ${result.model}`,
       })
+
+      // Learning happens after the answer, never inside it. The counters are
+      // instant; the model's reading is queued and invisible.
+      if (responseEngine) {
+        responseEngine.observe({ userText: input, afterAssistant: true })
+        if (responseEngine.due) responseEngine.refine(this.recentTurns())
+      }
     } catch (error) {
       const err = error as Error
       this.finalizeStreaming()
@@ -1585,6 +1683,11 @@ export class TuiApp {
       }
     } finally {
       this.abort = undefined
+      // The turn is over: the history is settled, so the panel stops showing a
+      // half-streamed estimate and takes the engine's last real count.
+      this.contextLiveChars = 0
+      this.recomputeContext()
+      this.scheduleRender()
     }
   }
 
@@ -1808,9 +1911,187 @@ export class TuiApp {
       if (state?.state?.contextSize && state.state.contextSize > 0) {
         this.contextMax = state.state.contextSize
       }
+      // The deep engine loads lazily, on the first request. That wait is
+      // minutes long, so it gets a live line instead of a silent turn.
+      this.startEngineNote(state?.state?.engine, state?.state?.port)
     }
 
     return true
+  }
+
+  /**
+   * Follows the engine while it works.
+   *
+   * llama.cpp has nothing to say - the first token is the answer to "is it
+   * ready". AirLLM does: it reports the layers it has loaded, and the load
+   * is the long part. Polling its own `/health` is what turns "no output for
+   * two minutes" into "loading 42%".
+   */
+  private startEngineNote(engine: string | undefined, port: number | undefined): void {
+    this.stopEngineNote()
+    if (engine !== "airllm" || !port) return
+
+    const tick = async () => {
+      const status = await probeAirllm(port).catch(() => undefined)
+      if (!status) {
+        this.engineNote = undefined
+        return
+      }
+      if (status.stage === "loading") {
+        const percent = typeof status.percent === "number" ? ` ${status.percent}%` : ""
+        this.engineNote = `deep engine \u00b7 loading${percent} \u00b7 layers stream from disk`
+      } else if (status.stage === "generating") {
+        this.engineNote = "deep engine \u00b7 thinking in one pass \u00b7 this is the slow part"
+      } else if (status.stage === "error") {
+        this.engineNote = `deep engine \u00b7 ${status.error ?? "an error"}`
+      } else {
+        this.engineNote = undefined
+      }
+      this.scheduleRender()
+    }
+
+    void tick()
+    this.enginePoll = setInterval(() => void tick(), 1500)
+    this.enginePoll.unref?.()
+  }
+
+  private stopEngineNote(): void {
+    if (this.enginePoll) {
+      clearInterval(this.enginePoll)
+      this.enginePoll = undefined
+    }
+    this.engineNote = undefined
+  }
+
+  // ── The response engine ──────────────────────────────────────────────────
+  //
+  // How this person wants to be answered is learned, not configured: the
+  // cheap counters run on every turn, and a background model reads the
+  // conversation every few turns and proposes a refinement. The result is a
+  // short section in the system prompt. None of it touches the transcript.
+
+  /** Loads the profile once, and keeps the adviser on the current model. */
+  private async ensureResponseEngine(): Promise<ResponseEngine | undefined> {
+    const ref = this.modelRef ?? this.config.model
+    if (this.response && this.responseModelRef === ref) return this.response
+    if (this.responseLoading) return this.responseLoading
+
+    this.responseLoading = (async () => {
+      try {
+        const resolved = this.providers.resolve(ref)
+        const profile = this.response?.current ?? (await loadResponseProfile())
+        const engine = new ResponseEngine({
+          profile,
+          model: resolved.model,
+          onChange: () => this.queueResponseSave(),
+        })
+        this.response = engine
+        this.responseModelRef = ref
+        return engine
+      } catch {
+        // No model yet (a fresh machine, or a provider that is down): the rest
+        // of the turn is unaffected, it simply has no style section.
+        return this.response
+      } finally {
+        this.responseLoading = undefined
+      }
+    })()
+    return this.responseLoading
+  }
+
+  private queueResponseSave(): void {
+    if (this.responseSaveTimer) clearTimeout(this.responseSaveTimer)
+    this.responseSaveTimer = setTimeout(() => {
+      this.responseSaveTimer = undefined
+      if (this.response) void saveResponseProfile(this.response.current)
+    }, 800)
+  }
+
+  /** The recent human/model turns, for the background reader. */
+  private recentTurns(limit = 12): RefineTurn[] {
+    return this.sessions
+      .getMessages(this.session.id)
+      .filter((message) => message.role === "user" || message.role === "assistant")
+      .map((message) => ({ role: message.role as "user" | "assistant", text: messageText(message) }))
+      .filter((turn) => turn.text.trim().length > 0)
+      .slice(-limit)
+  }
+
+  /**
+   * `/response` — see, force, or forget what has been learned.
+   *
+   * The profile is meant to be legible: a person should be able to tell why
+   * answers are the length they are, and to wipe it without hunting for a
+   * file.
+   */
+  async responseCommand(args: string[] = []): Promise<void> {
+    const engine = await this.ensureResponseEngine()
+    const action = (args[0] ?? "").toLowerCase()
+
+    if (action === "reset" || action === "forget") {
+      const fresh = await resetResponseProfile()
+      engine?.replace(fresh)
+      this.pushNotice("the response profile is back to neutral", "ok")
+      return
+    }
+
+    if (action === "refine" || action === "learn") {
+      if (!engine) {
+        this.printError("no model is available to read the conversation")
+        return
+      }
+      engine.refine(this.recentTurns())
+      this.pushNotice("reading this conversation in the background \u2014 nothing will appear here", "info")
+      return
+    }
+
+    if (!engine) {
+      this.printError("the response engine needs a model \u2014 /model or /provider first")
+      return
+    }
+
+    const profile = engine.current
+    const bar = (value: number): string => {
+      const filled = Math.round(Math.min(Math.max(value, 0), 1) * 12)
+      return `${theme.accent("\u2588".repeat(filled))}${theme.dim("\u2591".repeat(12 - filled))}`
+    }
+    const label = (name: string): string =>
+      name.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`)
+
+    this.print()
+    this.print(`  ${theme.bold("How IMURUN answers you")}`)
+    this.print(
+      theme.dim(
+        `  learned from ${profile.evidence.turns} turn(s) \u00b7 ${profile.evidence.corrections} correction(s) \u00b7 ` +
+          `${profile.evidence.refinements} background reading(s)`,
+      ),
+    )
+    this.print()
+    for (const dimension of ['brevity', 'depth', 'stepwise', 'codeFirst', 'formality', 'verification'] as const) {
+      this.print(
+        `  ${theme.dim(label(dimension).padEnd(14))} ${bar(profile[dimension])} ${theme.dim(
+          `${Math.round(profile[dimension] * 100)}%`,
+        )}`,
+      )
+    }
+    if (profile.instructions.length > 0) {
+      this.print()
+      this.print(`  ${theme.bold("Standing instructions")}`)
+      for (const instruction of profile.instructions) {
+        this.print(`    ${theme.warn("\u2022")} ${instruction}`)
+      }
+    }
+    const directive = engine.directive
+    if (directive) {
+      this.print()
+      this.print(`  ${theme.bold("What the model is told")}`)
+      for (const line of directive.split("\n")) this.print(`    ${theme.dim(line)}`)
+    }
+    this.print()
+    this.print(
+      theme.dim("  /response refine reads the conversation now \u00b7 /response reset starts over"),
+    )
+    this.print()
   }
 
   /**
@@ -2034,7 +2315,10 @@ export class TuiApp {
    */
   private async autoInstall(): Promise<boolean> {
     const hardware = await loadHardware()
-    const fitting = fittingModels(hardware, CATALOG)
+    // A first run should reach a working answer quickly: the quick-start list
+    // prefers a model that downloads in minutes, and `/model` has the larger
+    // ones once the machine is working.
+    const fitting = quickStartModels(hardware, CATALOG)
     if (fitting.length === 0) {
       this.printError("No catalog model fits this machine's memory \u2014 /model to browse.")
       return false
@@ -2048,7 +2332,10 @@ export class TuiApp {
       `setting up this machine: ${model.displayName} (${model.id} \u00b7 ${recommendedQuant}${size}) \u2014 ${reason}`,
       "ok",
     )
-    this.pushNotice("this downloads a few gigabytes \u00b7 esc stops it", "info")
+    this.pushNotice(
+      `downloading now \u00b7 the progress line below shows the engine, the weights and the speed \u00b7 esc stops it`,
+      "info",
+    )
     return this.install(model.id, recommendedQuant)
   }
 
@@ -2103,6 +2390,13 @@ export class TuiApp {
     }))
 
     items.push({ id: "__download__", label: "Download more models\u2026", detail: "browse the catalog", keywords: "install add" })
+    items.push({
+      id: "__deep__",
+      label: "Run a model larger than memory\u2026",
+      detail: "AirLLM streams the layers from disk \u2014 slow, but a 32B runs on a 4 GB card",
+      keywords: "deep airllm big 70b 32b huge",
+      group: "deep",
+    })
     if (installed.length > 0) {
       items.push({ id: "__remove__", label: "Delete an installed model\u2026", detail: "free disk space", keywords: "remove rm" })
     }
@@ -2154,6 +2448,10 @@ export class TuiApp {
         this.openCatalogPicker()
         return
       }
+      if (item.id === "__deep__") {
+        this.openDeepPicker()
+        return
+      }
       if (item.id === "__remove__") {
         void this.removeCommand([])
         return
@@ -2197,6 +2495,89 @@ export class TuiApp {
       void this.installCommand([item.id])
     })
   }
+  /**
+   * The deep models: weights too large to sit in memory, streamed from disk.
+   *
+   * Choosing one does not download anything yet - the first answer does, and
+   * the engine says how far it has got. That is deliberate: a 70B download is
+   * tens of gigabytes, and it should be the user's decision, not a side
+   * effect of opening a picker.
+   */
+  private openDeepPicker(): void {
+    const items: PaletteItem[] = DEEP_MODELS.map((model) => ({
+      id: model.id,
+      label: model.displayName,
+      detail: `${model.paramsB}B \u00b7 ${model.repo}${model.gated ? " \u00b7 needs HF access" : ""}`,
+      keywords: `${model.id} ${model.repo} deep airllm`,
+      group: "deep",
+    }))
+    items.push({
+      id: "__repo__",
+      label: "Any Hugging Face repo or local directory\u2026",
+      detail: "type an owner/name, or a folder of weights",
+      keywords: "custom repo directory",
+    })
+    this.openPicker("run a model larger than memory", items, (item) => {
+      if (item.id === "__repo__") {
+        void this.ask("Hugging Face repo (owner/name) or a directory of weights").then((value) => {
+          const repo = (value ?? "").trim()
+          if (repo) void this.runDeep(repo)
+        })
+        return
+      }
+      const model = DEEP_MODELS.find((candidate) => candidate.id === item.id)
+      if (model) void this.runDeep(model.repo)
+    })
+  }
+
+  /**
+   * `/deep` — set up and run a model the deep engine can stream.
+   *
+   * The engine install is the only part that is slow before anything runs
+   * (torch is about two gigabytes), so it gets a live line like a model
+   * install rather than a silent wait.
+   */
+  async deepCommand(args?: string | string[]): Promise<void> {
+    const target = Array.isArray(args) ? args[0] : args
+    if (!target) {
+      this.openDeepPicker()
+      return
+    }
+    await this.runDeep(target)
+  }
+
+  private async runDeep(repo: string): Promise<void> {
+    if (!repo) return
+    const known = DEEP_MODELS.find((model) => model.id === repo || model.repo === repo)
+    const resolved = known?.repo ?? repo
+
+    if (!airllmVenvPython()) {
+      this.pushNotice("setting up the deep engine \u2014 airllm and torch, about 2.5 GB", "info")
+      this.ensureTick()
+      this.installLine = `  ${theme.accent(spinnerFrame(this.spinnerTick))} ${theme.dim("preparing the deep engine\u2026")}`
+      this.scheduleRender()
+      const result = await ensureAirllmEngine({
+        python: this.config.runtime.airllm.python,
+        onStatus: (line) => {
+          this.installLine = `  ${theme.accent(spinnerFrame(this.spinnerTick))} ${theme.dim(line.slice(0, 140))}`
+          this.scheduleRender()
+        },
+      }).catch((error) => ({ installed: false, reason: (error as Error).message }))
+      this.installLine = undefined
+      if (!result.installed) {
+        this.printError(`the deep engine could not be installed: ${result.reason ?? "unknown reason"}`)
+        return
+      }
+      this.pushNotice("the deep engine is ready", "ok")
+    }
+
+    await this.setModel(`airllm/${resolved}`)
+    this.pushNotice(
+      "the first answer downloads the weights and loads them layer by layer \u2014 the status line shows the progress",
+      "info",
+    )
+  }
+
   private openAgentPicker(): void {
     const items: PaletteItem[] = this.agents.map((agent) => ({
       id: agent.id,
@@ -3339,15 +3720,41 @@ export class TuiApp {
       this.pushNotice("nothing to compact yet", "warn")
       return
     }
-    const digest = await this.memory.summarize(this.session, messages)
-    this.compactBudget = true
+
+    // `/compact` is a deliberate act, so it frees real room: fold down to half
+    // the window rather than trimming the last message off a full one.
+    const window = this.contextMax && this.contextMax > 0 ? this.contextMax : DEFAULT_CONTEXT_WINDOW
+    const plan = planCompaction(messages, {
+      maxChars: Math.max(1_500, Math.floor(planHistoryChars(window) * 0.5)),
+      minMessages: 2,
+    })
+    if (plan.dropped.length === 0) {
+      this.pushNotice("this session already fits in the window \u2014 nothing to fold", "info")
+      return
+    }
+
+    // Write the summary first. If it fails, the history is untouched; deleting
+    // first and failing to summarize would lose the work outright.
+    const digest = await this.memory.summarize(this.session, messages, plan.dropped.length)
+    for (const message of plan.dropped) this.sessions.deleteMessage(message.id, this.session.id)
+    this.compactBudget = false
+    // The measurement described the history that was just removed.
+    this.contextMeasured = 0
+    this.recomputeContext()
+    this.scheduleRender()
+
     this.pushNotice(
-      `compacted ${digest.messageCount} message(s) into the session summary \u2014 the model keeps the record, ` +
-        `the window is freed`,
+      `compacted ${plan.dropped.length} message(s) into the session summary \u2014 ` +
+        `${plan.kept.length} kept in the window, the rest is still on disk`,
       "ok",
     )
     if (digest.todos.length > 0) {
       this.print(`  ${theme.warn(sym.bullet)} ${theme.dim(`${digest.todos.length} open todo(s) carried forward`)}`)
+    }
+    if ((digest.folded ?? 0) > 0) {
+      this.print(
+        `  ${theme.dim(`the summary now stands in for ${digest.folded} earlier message(s) \u00b7 /memory ${this.session.id.slice(0, 8)}`)}`,
+      )
     }
   }
 
@@ -3536,6 +3943,7 @@ export class TuiApp {
       this.busy ||
       this.agentSwitch !== undefined ||
       this.installLine !== undefined ||
+      this.engineNote !== undefined ||
       this.modelBoot !== undefined ||
       this.activeSubagents > 0
     )
@@ -3711,7 +4119,7 @@ export class TuiApp {
       session: this.session.id.slice(0, 12),
       workingDir: this.workingDir,
       permissions: this.permissions.getMode(),
-      context: { used: this.contextUsed, max: this.contextMax },
+      context: { used: this.contextUsed, max: this.contextMax, estimated: this.contextIsEstimate },
       effort: this.effortLabel(),
       todos: this.todos,
       plan: this.plan ? planCounts(this.plan.steps) : undefined,
@@ -3726,12 +4134,7 @@ export class TuiApp {
   /** Recomputes the sidebar's numbers: context use, todos, context window. */
   private async refreshSidebar(): Promise<void> {
     try {
-      const messages = this.sessions.getMessages(this.session.id)
-      let chars = 0
-      for (const message of messages) {
-        chars += typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length
-      }
-      this.contextUsed = Math.round(chars / 4)
+      this.recomputeContext()
       await this.refreshTodos()
       if (this.config.tui.showMemoryUsage) {
         const stats = await this.memory.stats().catch(() => undefined)
@@ -3755,6 +4158,38 @@ export class TuiApp {
       /* the sidebar is cosmetic — never let it break a turn */
     }
     this.scheduleRender()
+  }
+
+  /**
+   * The number in the panel.
+   *
+   * A character estimate is what the *next* request costs, but it is only an
+   * estimate: tokenizers differ, and most of the prompt is not the
+   * conversation. The engine's own prompt-token count is the truth, so a
+   * measurement is used whenever it still describes the current history, and
+   * the estimate covers what has been added since.
+   *
+   * It moves during a turn (the answer is part of the next request), after a
+   * tool call (its result is too), and it drops the moment history is folded.
+   */
+  private recomputeContext(): void {
+    const messages = this.sessions.getMessages(this.session.id)
+    let chars = 0
+    for (const message of messages) {
+      chars +=
+        typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length
+      // Tool arguments are sent back with the history, so they count.
+      for (const call of message.toolCalls ?? []) chars += JSON.stringify(call.args ?? {}).length
+    }
+    // The system prompt and the tool schemas are in every request. They are
+    // small next to a long conversation, but ignoring them makes the first
+    // turn of a session look emptier than it is.
+    const overhead = 900 + this.baseTools.list().length * 90
+    const estimate = Math.ceil(chars / 3.6) + overhead + Math.ceil(this.contextLiveChars / 3.6)
+    const measured =
+      this.contextMeasured > 0 && messages.length <= this.contextMeasuredAt + 1 ? this.contextMeasured : 0
+    this.contextIsEstimate = measured === 0
+    this.contextUsed = Math.max(estimate, measured)
   }
 
   /**
@@ -3971,6 +4406,52 @@ export class TuiApp {
     } else {
       this.pushNotice(result.message, "warn")
     }
+  }
+
+  /**
+   * `/uninstall` — remove the program, keeping the models and the memory.
+   *
+   * The program is a few megabytes that can be installed again in a minute;
+   * the models are gigabytes and the memory is the user's. So this asks
+   * twice: once to confirm the removal, and once — a separate, clearly
+   * labelled question — about the data.
+   */
+  async uninstallCommand(): Promise<void> {
+    const method = detectInstallMethod()
+    this.pushNotice(`IMURUN is installed with ${describeInstallMethod(method)}`, "info")
+
+    const first = (await this.confirm("remove IMURUN from this machine?", "[y/N]", ["y", "n"])).toLowerCase()
+    if (first !== "y") {
+      this.pushNotice("nothing was removed", "info")
+      return
+    }
+
+    // The data is a separate question, with its own default: keeping it.
+    const purgeAnswer = (
+      await this.confirm(
+        "also delete your models, memory and settings (~/.imurun)?",
+        "[y/N] — Enter keeps them",
+        ["y", "n"],
+        "delete the data?",
+        "This cannot be undone. Saying no keeps every model you downloaded.",
+      )
+    ).toLowerCase()
+    const purge = purgeAnswer === "y"
+
+    // Stop holding the model before the program goes.
+    if (this.localSession) {
+      await this.localSession.detach().catch(() => {})
+      this.localSession = undefined
+      await this.runtime.stop().catch(() => {})
+    }
+
+    const result = uninstall({ purge })
+    for (const item of result.removed) this.pushNotice(`removed: ${item}`, "warn")
+    for (const item of result.kept) this.pushNotice(`kept: ${item}`, "info")
+    for (const error of result.errors) this.pushNotice(error, "warn")
+    this.pushNotice("closing IMURUN now", "ok")
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    await this.shutdown(0)
   }
 
   /**
@@ -4312,6 +4793,10 @@ export class TuiApp {
     }
 
     if (this.installLine) return fitVisible(this.installLine, width)
+
+    if (this.engineNote) {
+      return fitVisible(`  ${theme.accent(spinnerFrame(this.spinnerTick))} ${theme.dim(this.engineNote)}`, width)
+    }
 
     // Reading back: the jump affordance takes the status row, so it is always
     // drawn (never clipped like the overlay) and the whole row is clickable.

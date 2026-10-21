@@ -20,6 +20,40 @@ describe("renderBlock", () => {
     expect(renderBlock({ kind: "assistant", text: "   " }, 40)).toEqual([])
   })
 
+  test("a research block is one quiet line until it is clicked open", () => {
+    const block: Block = {
+      kind: "reasoning",
+      category: "search",
+      label: "researched 2 sources",
+      text: [
+        "Queries",
+        "  \u00b7 node current version",
+        "",
+        "Sources",
+        "  [1] Node.js releases",
+        "      https://nodejs.org/en/download/releases/",
+      ].join("\n"),
+      expanded: false,
+      live: false,
+      seconds: 0,
+    }
+
+    const collapsed = renderBlock(block, 60)
+    expect(collapsed).toHaveLength(1)
+    expect(stripAnsi(collapsed[0]!)).toContain("researched 2 sources")
+    expect(stripAnsi(collapsed[0]!)).toContain("click to expand")
+    // Collapsed means the sources stay out of the transcript.
+    expect(collapsed.join("\n")).not.toContain("https://")
+
+    const open = renderBlock({ ...block, expanded: true }, 60)
+    const text = stripAnsi(open.join("\n"))
+    expect(text).toContain("node current version")
+    expect(text).toContain("https://nodejs.org/en/download/releases/")
+    // The URL is a real OSC 8 link, and it costs no visible width.
+    expect(open.join("\n")).toContain("\u001b]8;;https://nodejs.org/en/download/releases/\u0007")
+    for (const line of open) expect(visibleWidth(line)).toBeLessThanOrEqual(60)
+  })
+
   test("tool blocks show the status glyph and a truncated detail", () => {
     const ok = stripAnsi(renderBlock({ kind: "tool", title: "read", status: "ok", detail: "file.ts" }, 40).join("\n"))
     expect(ok).toContain("read")

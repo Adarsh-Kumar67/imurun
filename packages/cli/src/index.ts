@@ -17,6 +17,8 @@ import { ragCommand } from "./commands/rag"
 import { skillsCommand } from "./commands/skills"
 import { updateCommand } from "./commands/update"
 import { setupCommand } from "./commands/setup"
+import { uninstallCommand } from "./commands/uninstall"
+import { deepCommand } from "./commands/deep"
 import { VERSION } from "./version"
 
 async function main(): Promise<number> {
@@ -38,6 +40,8 @@ async function main(): Promise<number> {
     .register(ragCommand)
     .register(updateCommand)
     .register(setupCommand)
+    .register(uninstallCommand)
+    .register(deepCommand)
 
   runner.register({
     name: "version",

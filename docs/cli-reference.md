@@ -31,6 +31,8 @@ usage summary rather than trying to open the UI.
 | `runtime` | Manage the local inference runtime. |
 | `skills` | List, inspect, search, and import skills. |
 | `rag` | Search the offline project index, or refresh it. |
+| `deep` | Run a model larger than memory — AirLLM streams its layers from disk. |
+| `uninstall` | Remove IMURUN, keeping your models and memory. |
 | `version` | Print the IMURUN version. |
 | `help` | Show help for a command. |
 
@@ -328,6 +330,7 @@ imurun setup [model-id] [--check] [--force] [--quiet]
 | `--check` | boolean | Say what is installed and what would be, and stop. |
 | `--force` | boolean | Install even when a model is already there. |
 | `--quiet` | boolean | Only report the result. |
+| `--deep` | boolean | Install the deep engine (AirLLM + torch, about 2.5 GB) so models larger than memory can run. |
 
 | Subcommand | Does |
 | --- | --- |
@@ -338,7 +341,55 @@ imurun setup [model-id] [--check] [--force] [--quiet]
 imurun setup --check
 imurun setup
 imurun setup qwen2.5-coder-7b
+imurun setup --deep
 ```
+
+## `imurun deep`
+
+Run a model that does not fit in this machine's memory. The deep engine
+(AirLLM) keeps one layer resident and streams the rest from disk, so a 32B or
+72B model answers on a laptop with a 4 GB card. It is slow — minutes for an
+answer — and it is the difference between "that model cannot run here" and
+"that model runs here, eventually".
+
+```bash
+imurun deep                                     # what can run, and whether it can
+imurun deep Qwen/Qwen2.5-Coder-32B-Instruct     # a known deep model
+imurun deep owner/any-hugging-face-repo         # any repo
+imurun deep D:\weights\my-model                 # a local directory of weights
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `--stop` | boolean | Stop the deep engine and free the memory. |
+| `--no-start` | boolean | Install and select the model, but do not start it. |
+| `--no-install` | boolean | Do not install airllm/torch even when they are missing. |
+
+`imurun deep <model>` remembers its choice, so the next `imurun` uses it. The
+first answer downloads the weights. See [deep models](deep-models.md).
+
+## `imurun uninstall`
+
+Remove IMURUN from this machine. The program goes; **your models, memory,
+sessions and configuration stay** unless `--purge` is given, because those are
+measured in gigabytes and are not replaceable by reinstalling.
+
+```bash
+imurun uninstall              # remove the program, keep the data
+imurun uninstall --dry-run    # say what would be removed, change nothing
+imurun uninstall --purge      # remove ~/.imurun as well
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `--purge` | boolean | Also delete `~/.imurun`: models, memory, sessions, configuration. |
+| `--yes`, `-y` | boolean | Do not ask for confirmation. |
+| `--dry-run` | boolean | Say what would be removed, and change nothing. |
+
+How the program was installed is detected (npm, pip, or a standalone binary),
+so the right uninstaller is used. It is safe to run twice. The same thing is
+available inside the interface as `/uninstall`, which asks twice: once to
+remove the program, and once — separately, defaulting to no — about the data.
 
 ## `imurun update`
 

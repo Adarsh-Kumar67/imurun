@@ -77,6 +77,13 @@ export const ModelInfo = z.object({
   family: z.string(),
   /** Parameters in billions. */
   paramsB: z.number().positive(),
+  /**
+   * The original (non-GGUF) Hugging Face repo, when there is one.
+   *
+   * The quantizations below point at GGUF conversions; the deep engine
+   * (AirLLM) needs the original weights, so it needs this.
+   */
+  hfRepo: z.string().optional(),
   /** One-line description shown in the catalog. */
   description: z.string().default(""),
   quantizations: z.array(QuantVariant).min(1),

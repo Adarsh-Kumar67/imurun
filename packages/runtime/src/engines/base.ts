@@ -10,6 +10,12 @@ export interface EngineStartOptions {
   modelName?: string
   /** Vision projector (mmproj) file to load alongside the model. */
   mmprojPath?: string
+  /** Hugging Face repo id or a local directory (the deep engine). */
+  modelRepo?: string
+  /** Weight compression for the deep engine. */
+  compression?: "4bit" | "8bit" | "none"
+  /** Longest answer the deep engine produces in one pass. */
+  maxNewTokens?: number
   port: number
   /** 0 = auto. */
   threads?: number

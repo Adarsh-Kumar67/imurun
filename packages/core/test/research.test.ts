@@ -15,9 +15,12 @@ import {
   LinearModel,
   ResearchEngine,
   ResearchNeedEngine,
+  CROSS_CHECK_CONFIDENCE,
+  answerConfidence,
   claimCheckPrompt,
   claimQueries,
   extractClaims,
+  needsCrossCheck,
   unsupportedClaims,
   type ResearchBundle,
   type ResearchSource,
@@ -248,6 +251,26 @@ describe("checking the answer", () => {
     const prompt = claimCheckPrompt(claims)
     expect(prompt).toContain("Node.js 27")
     expect(prompt).toContain("Do not invent numbers, versions, dates or citations")
+  })
+
+  test("a well-supported answer is not searched again", () => {
+    const answer = "The current release of Node.js is version 24, released in May, and it ships with npm 11."
+    expect(answerConfidence(answer, bundle)).toBeGreaterThanOrEqual(CROSS_CHECK_CONFIDENCE)
+    expect(needsCrossCheck(answer, bundle)).toBe(false)
+  })
+
+  test("an invented citation needs a check", () => {
+    expect(needsCrossCheck("The current release is version 24 [1], according to the manual [7].", bundle)).toBe(true)
+  })
+
+  test("a number no source mentions needs a check, even in a fluent sentence", () => {
+    expect(
+      needsCrossCheck("The current release of Node.js is version 24, released in June 2026.", bundle),
+    ).toBe(true)
+  })
+
+  test("with no evidence gathered there is nothing to check against", () => {
+    expect(needsCrossCheck("Anything at all.", { ...bundle, passages: [] })).toBe(false)
   })
 })
 

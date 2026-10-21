@@ -1,7 +1,7 @@
 # Slash commands
 
 **What this covers:** every slash command in the interactive UI, what it does,
-its usage, and its aliases. It is the reference for the 27 commands defined in
+its usage, and its aliases. It is the reference for the 33 commands defined in
 `packages/tui/src/commands.ts`. For shell subcommands instead of in-session
 commands, see [CLI reference](cli-reference.md).
 
@@ -24,6 +24,8 @@ aliases.
 | `/prompts` | `/prompt`, `/ledger` | Every request made in this session, and whether it is done or still pending. | `/prompts [show \| open]` |
 | `/select` | `/selection` | Release the mouse so you can select and copy the text on screen. | `/select` |
 | `/update` | `/upgrade` | Check for a newer IMURUN and install it. | `/update [check]` |
+| `/deep` | `/airllm` | Run a model larger than memory — AirLLM streams it from disk. | `/deep [repo]` |
+| `/uninstall` | `—` | Remove IMURUN from this machine, keeping your models and memory. | `/uninstall` |
 | `/clear` | — | Clear the screen. | `/clear` |
 | `/model` | — | Switch the model (opens a picker) or download more. | `/model [ref]` |
 | `/models` | — | List installed models and machine recommendations. | `/models` |
@@ -37,7 +39,8 @@ aliases.
 | `/queue` | — | Show, edit, drop, or clear messages queued behind the current turn. | `/queue [edit <n>\|drop <n>\|clear]` |
 | `/memory` | - | Show what IMURUN remembers, search it, or tend the vault. | `/memory [query \| vault [tidy]]` |
 | `/copy` | `/yank` | Copy the last answer, or a numbered code block, to the clipboard. | `/copy [list \| <n>]` |
-| `/compact` | — | Free context now: fold older turns into the session summary. | `/compact` |
+| `/compact` | — | Free context now: summarise older turns, remove them from the window, keep the summary. | `/compact` |
+| `/response` | `/style` | See, force, or reset how IMURUN answers you, learned from this conversation. | `/response [refine\|reset]` |
 | `/tools` | — | List the tools available to the current agent. | `/tools` |
 | `/cwd` | — | Show or change the working directory. | `/cwd [path]` |
 | `/status` | — | Show model, agent, runtime, and storage status. | `/status` |

@@ -116,6 +116,23 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "uninstall",
+    summary: "Remove IMURUN from this machine, keeping your models and memory",
+    usage: "/uninstall",
+    run(app) {
+      return app.uninstallCommand()
+    },
+  },
+  {
+    name: "deep",
+    aliases: ["airllm"],
+    summary: "Run a model larger than memory — AirLLM streams its layers from disk",
+    usage: "/deep [repo]",
+    run(app, args) {
+      return app.deepCommand(args)
+    },
+  },
+  {
     name: "clear",
     summary: "Clear the screen",
     run(app) {
@@ -225,6 +242,15 @@ const COMMANDS: SlashCommand[] = [
     usage: "/compact",
     run(app) {
       return app.compactCommand()
+    },
+  },
+  {
+    name: "response",
+    aliases: ["style"],
+    summary: "See, force, or reset how IMURUN answers you — learned from this conversation",
+    usage: "/response [refine|reset]",
+    run(app, args) {
+      return app.responseCommand(args)
     },
   },
   {

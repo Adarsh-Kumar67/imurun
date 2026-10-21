@@ -10,7 +10,15 @@ import { ProviderConfig } from "./provider"
 import { ProviderType } from "./provider"
 
 export const RuntimeConfig = z.object({
-  engine: z.enum(["llama-cpp", "ollama"]).default("llama-cpp"),
+  /**
+   * Which engine serves the model.
+   *
+   *   llama-cpp  GGUF files, resident in memory, fast
+   *   ollama     an Ollama daemon the user already runs
+   *   airllm     layers streamed from disk, so a model far larger than the
+   *              card still runs - slower, but it runs
+   */
+  engine: z.enum(["llama-cpp", "ollama", "airllm"]).default("llama-cpp"),
   /**
    * Which llama.cpp build to install: "auto" picks the best fit for the
    * detected hardware (with automatic fallback when a build will not run).
@@ -39,6 +47,22 @@ export const RuntimeConfig = z.object({
   flashAttention: z.boolean().default(true),
   /** Opt into speculative decoding when a matching draft model is available. */
   speculativeDecoding: z.boolean().default(false),
+  /**
+   * The deep engine. `airllm` streams a model's layers from disk, which is
+   * how a 32B or 70B model answers on a laptop that could never hold it.
+   */
+  airllm: z
+    .object({
+      /** Python interpreter to use. Empty = the engine's own virtualenv. */
+      python: z.string().optional(),
+      /** Weight compression: `4bit` needs the least memory and is the default. */
+      compression: z.enum(["4bit", "8bit", "none"]).default("4bit"),
+      /** Longest answer the deep engine will produce in one pass. */
+      maxNewTokens: z.number().int().positive().default(1024),
+      /** A deep answer is slow; this is how long to wait before giving up. */
+      timeoutMinutes: z.number().int().positive().default(45),
+    })
+    .prefault({}),
 })
 export type RuntimeConfig = z.infer<typeof RuntimeConfig>
 

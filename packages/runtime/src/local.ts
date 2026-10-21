@@ -21,6 +21,10 @@ export interface LocalTarget {
   installedId?: string
   /** The model's trained context window — the origin for YaRN extension. */
   contextLength?: number
+  /** Which engine should serve it. */
+  engine?: "llama-cpp" | "airllm"
+  /** The original weights, for the deep engine. */
+  repo?: string
 }
 
 export interface LocalResolution {
@@ -74,6 +78,18 @@ export function resolveLocalTarget(ref: string | undefined, installed: Installed
     return { target: targetOf(entry), modelRef: `local/${entry.modelId}` }
   }
 
+  // `airllm/<repo>`: the deep engine, for weights that are never a GGUF.
+  // The repo id keeps its slash, which is why the prefix is stripped rather
+  // than split: `airllm/Qwen/Qwen2.5-Coder-32B-Instruct` is one repo.
+  if (ref.toLowerCase().startsWith("airllm/")) {
+    const repo = ref.slice("airllm/".length)
+    const name = repo.replace(/\\/g, "/").replace(/\/$/, "").split("/").pop() ?? repo
+    return {
+      target: { modelName: name, path: "", engine: "airllm", repo },
+      modelRef: `airllm/${repo}`,
+    }
+  }
+
   if (ref.toLowerCase().endsWith(".gguf")) {
     // The path may have been pasted from another machine, so both separators
     // are honoured when taking the model name out of it.
@@ -105,6 +121,8 @@ function targetOf(entry: InstalledModel): LocalTarget {
     mmprojPath: entry.mmprojPath,
     installedId: entry.id,
     contextLength: entry.contextLength,
+    // A GGUF file is llama.cpp's; the deep engine takes original weights.
+    engine: "llama-cpp",
   }
 }
 
@@ -149,12 +167,17 @@ export async function ensureLocalRuntime(
 
     try {
       await manager.start({
-        modelPath: target.path,
+        modelPath: target.path || undefined,
         modelName: target.modelName,
         mmprojPath: target.mmprojPath,
+        modelRepo: target.repo,
+        engineId: target.engine,
         nativeContextSize: target.contextLength,
       })
     } catch (error) {
+      // The deep engine has its own failure modes (no Python, no airllm, a
+      // gated repo), and reinstalling llama.cpp would not help; pass it on.
+      if (target.engine === "airllm") throw error
       // A prebuilt GPU build can fail to load on an unknown machine (missing
       // driver, unsupported runtime). Re-install the portable CPU build once and
       // retry — the user never has to choose an engine by hand.
@@ -164,9 +187,11 @@ export async function ensureLocalRuntime(
       const engine = await ensureLlamaCppEngine({ force: true, preferVariant: "cpu", onStatus: (m) => logger.info(m) })
       logger.info(`reinstalled ${engine.version ?? "llama.cpp"} (${engine.variant ?? "cpu"}) at ${engine.binaryPath}`)
       await manager.start({
-        modelPath: target.path,
+        modelPath: target.path || undefined,
         modelName: target.modelName,
         mmprojPath: target.mmprojPath,
+        modelRepo: target.repo,
+        engineId: target.engine,
         nativeContextSize: target.contextLength,
       })
     }

@@ -31,6 +31,7 @@ export const AUTO_ALLOW_TOOLS: readonly string[] = [
   "read",
   "glob",
   "grep",
+  "time",
   "code_search",
   "memory",
   "progress",

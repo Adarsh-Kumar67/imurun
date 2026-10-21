@@ -7,6 +7,7 @@ import {
   fittingModels,
   pickQuant,
   quantSizeMB,
+  quickStartModels,
   recommendModels,
   searchCatalog,
 } from "../src"
@@ -147,5 +148,24 @@ describe("recommendation engine", () => {
     const gpu = profile({ ramMB: 65_536, cores: 16, gpu: [RTX_4090] })
     const model = CATALOG.find((m) => m.id === "qwen2.5-coder-14b")!
     expect(estimateSpeed(model, "Q4_K_M", gpu)).toBeGreaterThan(estimateSpeed(model, "Q4_K_M", cpu))
+  })
+
+  test("a first install prefers a quick download over the biggest fit", () => {
+    // 16 GB: the best fit is a 7B at ~5.7 GB, which is a long first wait.
+    const quick = quickStartModels(profile({ ramMB: 16_384, cores: 8 }))
+    expect(quick.length).toBeGreaterThan(0)
+    const size = (entry: (typeof quick)[number]) =>
+      entry.model.quantizations.find((q) => q.type === entry.recommendedQuant)?.sizeGB ?? 0
+    expect(size(quick[0]!)).toBeLessThanOrEqual(2.5)
+    // Still the best of the small ones, not simply the smallest.
+    const fitting = fittingModels(profile({ ramMB: 16_384, cores: 8 }))
+    expect(quick[0]!.model.capabilities.coding).toBeGreaterThanOrEqual(
+      Math.min(...fitting.map((entry) => entry.model.capabilities.coding)),
+    )
+  })
+
+  test("a machine with nothing small enough still gets a model", () => {
+    const tiny = quickStartModels(profile({ ramMB: 4_096, cores: 2 }), undefined, { maxDownloadGB: 0.01 })
+    expect(tiny.length).toBeGreaterThan(0)
   })
 })

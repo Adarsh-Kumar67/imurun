@@ -19,6 +19,7 @@ The base registry registers 14 tools; the interactive UI registers a 15th,
 | `shell` | Run a command through the platform shell. | Yes |
 | `glob` | Find files by pattern, newest first. | No |
 | `grep` | Search file contents with a regex. | No |
+| `time` | The current date and time, locally or in another time zone. | No |
 | `code_search` | Search the whole project via the offline index. | No |
 | `memory` | Save and recall durable facts. | No |
 | `progress` | Record where a piece of work is. | No |
@@ -169,6 +170,20 @@ Limits: **100** matches by default, up to **1000**; files larger than **1 MB**
 are skipped; binary files are skipped; the same ignored directories as `glob`
 are skipped; and matched lines longer than 300 characters are truncated. The
 walk is bounded to a depth of 24.
+
+## time
+
+The machine's clock, so a question that depends on "now" is answered from a
+clock instead of a training cutoff. It returns the local time, an ISO timestamp,
+the zone and the Unix second, and accepts an IANA zone for anywhere else.
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `timeZone` | string | Optional IANA name, e.g. `Asia/Kolkata`. |
+
+The system prompt already states the local date and time at the start of every
+run; the tool is for the exact time, another zone, or an elapsed duration. It
+never prompts, and nothing is stored.
 
 ## code_search
 

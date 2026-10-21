@@ -15,6 +15,7 @@ import { editTool } from "./edit"
 import { shellTool } from "./shell"
 import { globTool } from "./glob"
 import { grepTool } from "./grep"
+import { timeTool } from "./time"
 import { memoryTool } from "./memory"
 import { progressTool } from "./progress"
 import { todoTool } from "./todo"
@@ -68,6 +69,7 @@ export class ToolRegistry {
       .register(shellTool)
       .register(globTool)
       .register(grepTool)
+      .register(timeTool)
       .register(codeSearchTool)
       .register(memoryTool)
       .register(progressTool)

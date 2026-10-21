@@ -14,6 +14,7 @@ import type { ImurunConfig } from "@imurun/schema"
 import { imurunDir, logger, sleep } from "@imurun/util"
 import type { Engine, EngineHealth, EngineHandle, EngineStartOptions } from "./engines/base"
 import { isProcessAlive, killProcess } from "./engines/base"
+import { AirLlmEngine } from "./engines/airllm"
 import { LlamaCppEngine, planLlamaContext } from "./engines/llama-cpp"
 import { OllamaEngine } from "./engines/ollama"
 import { Supervisor, type SupervisorStopReason } from "./supervisor"
@@ -52,6 +53,8 @@ export interface StartRuntimeOptions {
   modelName?: string
   /** Vision projector file for VL models. */
   mmprojPath?: string
+  /** Hugging Face repo id, or a local directory (the deep engine). */
+  modelRepo?: string
   /** Port override. */
   port?: number
   /** Engine override; defaults to config.runtime.engine. */
@@ -71,7 +74,13 @@ export class RuntimeManager {
 
   /** Engine instances, in availability-check order. */
   private allEngines(): Engine[] {
-    return this.enginesOverride ?? [new LlamaCppEngine(), new OllamaEngine()]
+    return (
+      this.enginesOverride ?? [
+        new LlamaCppEngine(),
+        new OllamaEngine(),
+        new AirLlmEngine(this.config.runtime.airllm.python),
+      ]
+    )
   }
 
   engine(id: string): Engine {
@@ -169,12 +178,21 @@ export class RuntimeManager {
           "Using Ollama instead? Set runtime.engine to \"ollama\" in imurun.json.",
       )
     }
+    if (engine.id === "airllm" && !options.modelRepo) {
+      throw new Error(
+        "The deep engine needs a Hugging Face repo or a local model directory. " +
+          "Run `imurun deep <repo>` (for example `imurun deep Qwen/Qwen2.5-Coder-32B-Instruct`).",
+      )
+    }
 
     const port = options.port ?? this.config.runtime.port
     const engineOptions: EngineStartOptions = {
       modelPath: options.modelPath,
       modelName: options.modelName,
       mmprojPath: options.mmprojPath,
+      modelRepo: options.modelRepo,
+      compression: this.config.runtime.airllm.compression,
+      maxNewTokens: this.config.runtime.airllm.maxNewTokens,
       port,
       threads: this.config.runtime.threads || undefined,
       gpuLayers: this.config.runtime.gpuLayers,
@@ -189,7 +207,8 @@ export class RuntimeManager {
 
     // Record the window that was actually requested so `runtime status` can
     // show it without re-deriving anything.
-    const plan = planLlamaContext(engineOptions)
+    const plan: { contextSize: number; ropeScaling?: string; ropeScale?: number } =
+      engine.id === "llama-cpp" ? planLlamaContext(engineOptions) : { contextSize: 0 }
 
     // The engine is the authority on what it really loaded — it may cap the
     // request to fit memory. Ask it, and budget the agent against that number.
@@ -209,6 +228,7 @@ export class RuntimeManager {
       port: handle.port,
       pid: handle.pid,
       model: options.modelName ?? (options.modelPath ? basename(options.modelPath).replace(/\.gguf$/i, "") : undefined),
+      modelRepo: options.modelRepo,
       contextSize: contextSize || undefined,
       ropeScaling: plan.ropeScaling,
       ropeScale: plan.ropeScale,

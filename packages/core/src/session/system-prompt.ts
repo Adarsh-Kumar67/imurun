@@ -65,6 +65,32 @@ function platformName(): string {
   }
 }
 
+/**
+ * The local date and time, with the offset the user is actually in.
+ *
+ * `toISOString()` is UTC, which silently shows yesterday to anyone west of
+ * Greenwich after 5pm. The model reasons about "today" from this line, so it
+ * has to be the user's today.
+ */
+export function nowLine(now = new Date()): string {
+  const date = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now)
+  const time = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(now)
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local"
+  const offsetMinutes = -now.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? "+" : "-"
+  const hours = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0")
+  const minutes = String(Math.abs(offsetMinutes) % 60).padStart(2, "0")
+  return `${date} ${time} (${zone}, UTC${sign}${hours}:${minutes})`
+}
+
 const BASE = `You are IMURUN, a local-first coding agent working in the user's terminal.
 
 You run on the user's machine with real tools: a shell that executes real commands, file tools that read and
@@ -90,6 +116,20 @@ Find things out before you answer:
   outside this project, anything recent — search for it first (web_search, then web_fetch to read the page).
   Never answer such a question from memory, and never guess.
 - Trust what the code in this project actually says over what you assume a library does.
+- The date and time at the start of this run are in the environment section. Use the time tool when the exact
+  time, another time zone or an elapsed duration matters. Never guess the date, and never assume the year is
+  the one you were trained in.
+
+Telling the user what is true:
+- Never print a secret — an API key, token, password or private key — into the chat, a file or a command. If one
+  matters, name it (NPM_TOKEN) and say where it is set; never its value.
+- Keep what you verified apart from what you assume. "I ran the tests and they passed" and "this should work"
+  are different sentences, and only one of them is evidence.
+- When you talk about code, give the file and line. Do not describe an API from memory when the source is on
+  disk; read it.
+- Quote commands, paths and identifiers exactly. Do not invent flags, package names or file names.
+- If you could not check something, say what you would need in order to check it. An honest gap is more useful
+  than a confident guess.
 
 Planning work that takes more than a couple of steps:
 - Write it down before you start: the plan tool records the goal, the approach, and the ordered steps with the
@@ -149,7 +189,7 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
     "Environment:",
     `- Platform: ${platformName()}`,
     `- Project directory: ${ctx.workingDir}`,
-    `- Today: ${new Date().toISOString().slice(0, 10)}`,
+    `- Now: ${nowLine()}`,
     ctx.model ? `- Model: ${ctx.model}` : "",
     ctx.agent ? `- Agent: ${ctx.agent}` : "",
     ctx.skillsDir ? `- Skills directory: ${ctx.skillsDir}` : "",

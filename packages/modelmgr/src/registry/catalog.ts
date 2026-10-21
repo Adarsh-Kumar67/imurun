@@ -37,6 +37,7 @@ interface CatalogInput {
   paramsB: number
   description: string
   quants: QuantInput[]
+  hfRepo?: string
   capabilities: ModelCapabilities
   minTier: "minimal" | "low" | "mid" | "high" | "extreme"
   /** RAM the smallest practical quant needs, including OS headroom. */
@@ -50,6 +51,7 @@ function model(input: CatalogInput): ModelInfoType {
   return ModelInfo.parse({
     id: input.id,
     displayName: input.displayName,
+    hfRepo: input.hfRepo,
     family: input.family,
     paramsB: input.paramsB,
     description: input.description,
@@ -81,6 +83,7 @@ function standardQuants(repo: string, filePrefix: string): QuantInput[] {
 export const CATALOG: readonly ModelInfoType[] = [
   model({
     id: "qwen2.5-coder-1.5b",
+    hfRepo: "Qwen/Qwen2.5-Coder-1.5B-Instruct",
     displayName: "Qwen2.5 Coder 1.5B",
     family: "Qwen",
     paramsB: 1.5,
@@ -94,6 +97,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen2.5-coder-7b",
+    hfRepo: "Qwen/Qwen2.5-Coder-7B-Instruct",
     displayName: "Qwen2.5 Coder 7B",
     family: "Qwen",
     paramsB: 7,
@@ -108,6 +112,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen2.5-coder-14b",
+    hfRepo: "Qwen/Qwen2.5-Coder-14B-Instruct",
     displayName: "Qwen2.5 Coder 14B",
     family: "Qwen",
     paramsB: 14,
@@ -122,6 +127,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen2.5-coder-32b",
+    hfRepo: "Qwen/Qwen2.5-Coder-32B-Instruct",
     displayName: "Qwen2.5 Coder 32B",
     family: "Qwen",
     paramsB: 32,
@@ -136,6 +142,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen3-4b",
+    hfRepo: "Qwen/Qwen3-4B",
     displayName: "Qwen3 4B",
     family: "Qwen",
     paramsB: 4,
@@ -153,6 +160,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen3-8b",
+    hfRepo: "Qwen/Qwen3-8B",
     displayName: "Qwen3 8B",
     family: "Qwen",
     paramsB: 8,
@@ -171,6 +179,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen3-14b",
+    hfRepo: "Qwen/Qwen3-14B",
     displayName: "Qwen3 14B",
     family: "Qwen",
     paramsB: 14,
@@ -189,6 +198,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen3-32b",
+    hfRepo: "Qwen/Qwen3-32B",
     displayName: "Qwen3 32B",
     family: "Qwen",
     paramsB: 32,
@@ -206,6 +216,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "deepseek-coder-v2-lite-16b",
+    hfRepo: "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct",
     displayName: "DeepSeek Coder V2 Lite 16B",
     family: "DeepSeek",
     paramsB: 16,
@@ -223,6 +234,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "codestral-22b",
+    hfRepo: "mistralai/Codestral-22B-v0.1",
     displayName: "Codestral 22B",
     family: "Mistral",
     paramsB: 22,
@@ -239,6 +251,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "yi-coder-9b",
+    hfRepo: "01-ai/Yi-Coder-9B-Chat",
     displayName: "Yi-Coder 9B Chat",
     family: "Yi",
     paramsB: 9,
@@ -252,6 +265,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "granite-3.1-8b",
+    hfRepo: "ibm-granite/granite-3.1-8b-instruct",
     displayName: "Granite 3.1 8B Instruct",
     family: "IBM",
     paramsB: 8,
@@ -265,6 +279,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "phi-4-mini-3.8b",
+    hfRepo: "microsoft/Phi-4-mini-instruct",
     displayName: "Phi-4 Mini 3.8B",
     family: "Microsoft",
     paramsB: 3.8,
@@ -278,6 +293,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "llama-3.2-3b",
+    hfRepo: "meta-llama/Llama-3.2-3B-Instruct",
     displayName: "Llama 3.2 3B Instruct",
     family: "Meta",
     paramsB: 3,
@@ -291,6 +307,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "gemma-3-12b",
+    hfRepo: "google/gemma-3-12b-it",
     displayName: "Gemma 3 12B IT (QAT)",
     family: "Google",
     paramsB: 12,
@@ -310,6 +327,7 @@ export const CATALOG: readonly ModelInfoType[] = [
   }),
   model({
     id: "qwen2.5-vl-7b",
+    hfRepo: "Qwen/Qwen2.5-VL-7B-Instruct",
     displayName: "Qwen2.5 VL 7B",
     family: "Qwen",
     paramsB: 7,

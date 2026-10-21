@@ -17,6 +17,7 @@ import {
   autoSetup,
   CATALOG,
   createInstallRenderer,
+  ensureAirllmEngine,
   fittingModels,
   listInstalled,
   loadHardware,
@@ -26,11 +27,12 @@ import type { Command } from "../framework/command"
 export const setupCommand: Command = {
   name: "setup",
   summary: "Install the engine and a model that fits this machine",
-  usage: "imurun setup [model-id] [--check] [--force] [--quiet]",
+  usage: "imurun setup [model-id] [--check] [--force] [--quiet] [--deep]",
   options: [
     { name: "check", type: "boolean", description: "Say what would be installed, and stop" },
     { name: "force", type: "boolean", description: "Install even when a model is already there" },
     { name: "quiet", type: "boolean", description: "Only report the result" },
+    { name: "deep", type: "boolean", description: "Install AirLLM and torch, so models larger than memory can run" },
   ],
 
   async run({ args, options }) {
@@ -38,6 +40,32 @@ export const setupCommand: Command = {
     const config = loaded.config
     const modelId = args[0]
     const quiet = options.quiet === true
+
+    // The deep engine is Python, so it has its own install path. It is opt-in
+    // because it is a two-and-a-half-gigabyte download of torch, and most
+    // machines never need it.
+    if (options.deep === true) {
+      console.log("")
+      console.log(`  ${chalk.bold("IMURUN")} ${chalk.gray("setting up the deep engine (AirLLM)")}`)
+      console.log(`  ${chalk.gray("models larger than memory, streamed layer by layer from disk")}`)
+      console.log("")
+      const result = await ensureAirllmEngine({
+        python: config.runtime.airllm.python,
+        onStatus: (line) => {
+          if (!quiet) console.log(`  ${chalk.gray(line.slice(0, 160))}`)
+        },
+      })
+      console.log("")
+      if (!result.installed) {
+        console.log(`  ${chalk.yellow("⚠")} ${chalk.gray(result.reason ?? "the deep engine could not be installed")}`)
+        console.log("")
+        return 1
+      }
+      console.log(`  ${chalk.green("✔")} ${chalk.bold("the deep engine is ready")} ${chalk.gray(`(${result.python})`)}`)
+      console.log(`  ${chalk.gray("run a model with")} ${chalk.cyan("imurun deep Qwen/Qwen2.5-Coder-32B-Instruct")}`)
+      console.log("")
+      return 0
+    }
 
     if (options.check === true) {
       const installed = await listInstalled()

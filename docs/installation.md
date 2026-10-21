@@ -243,14 +243,44 @@ Per-project state lives under `<project>/.imurun/` (`PLAN.md`, `todos.md`,
 
 ## Uninstall
 
+The program and your data are two different things, and uninstalling treats
+them that way:
+
 ```bash
-npm uninstall -g imurun
+imurun uninstall              # remove the program; keep models, memory, config
+imurun uninstall --dry-run    # say what would be removed
+imurun uninstall --purge      # remove ~/.imurun too
+```
+
+It detects how IMURUN was installed (npm, pip, or a standalone binary) and
+uses the matching uninstaller. Inside the interface, `/uninstall` does the
+same and asks twice — once for the program, once for the data, the second
+defaulting to "keep".
+
+If you would rather do it by hand:
+
+```bash
+npm uninstall -g imurun       # or: pip uninstall imurun
 ```
 
 That removes the command but leaves your models, configuration, memory, and
 sessions under `~/.imurun`. To reclaim that space from inside IMURUN, use
 `imurun models clean --yes` (add `--engine` to include the engine binaries) and
 delete `~/.imurun` when you want to remove everything.
+
+## Models larger than the machine
+
+Everything above runs a model that fits in memory. The deep engine lifts that
+limit by streaming a model's layers from disk, so a 32B or 72B model answers
+on a laptop with a 4 GB card — slowly. It is a separate install because it is
+a separate 2.5 GB of PyTorch:
+
+```bash
+imurun setup --deep
+imurun deep Qwen/Qwen2.5-Coder-32B-Instruct
+```
+
+See [Deep models](deep-models.md) for the costs and the details.
 
 ## License
 

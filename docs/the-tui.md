@@ -279,8 +279,16 @@ Local models have a small window, so IMURUN treats it as a hard budget:
   harder and retries, so you do not see the raw overflow error.
 - An answer cut off by the output limit is continued automatically, with an
   instruction not to repeat what was already written.
-- `/compact` does this on demand, and the `CONTEXT` bar in the side panel shows
-  the effect.
+- `/compact` does this on demand: it writes the summary first, then removes the
+  folded messages from the session, so the window really shrinks. The summary
+  keeps the goal, the files touched, the commands, the open todos, the facts,
+  the key *names* mentioned (never their values), and the topics.
+- At 90% of the window IMURUN folds automatically, before the next request, so
+  the request that needs the room is not the one that fails. The panel says
+  `folds itself at 90%` once it is close.
+- The `CONTEXT` bar is live. It shows the engine's own prompt-token count for
+  the last request plus what has been written since, and marks the figure
+  `(est.)` until the engine has confirmed it.
 
 The exact limits are documented in [Tools](tools.md) and
 [Configuration](configuration.md#memory-rag-and-web).

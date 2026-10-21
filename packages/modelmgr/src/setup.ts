@@ -21,7 +21,7 @@
 import type { ImurunConfig, InstalledModel, QuantType } from "@imurun/schema"
 import { loadHardware } from "./hardware/detect"
 import { CATALOG } from "./registry/catalog"
-import { fittingModels } from "./registry/filter"
+import { fittingModels, quickStartModels } from "./registry/filter"
 import { installModel, type InstallEvent } from "./install/installer"
 import { listInstalled } from "./install/store"
 
@@ -63,7 +63,9 @@ export async function autoSetup(options: AutoSetupOptions): Promise<AutoSetupRes
   }
 
   const hardware = await loadHardware()
-  const fitting = fittingModels(hardware, CATALOG)
+  // A first run picks a model that downloads quickly; the larger ones are a
+  // deliberate choice, not something an install should make in the background.
+  const fitting = quickStartModels(hardware, CATALOG)
   if (fitting.length === 0) {
     const reason = "No catalog model fits this machine's available memory."
     options.onStatus?.(reason)

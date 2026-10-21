@@ -74,4 +74,23 @@ describe("local model resolution", () => {
     expect(findInstalled(entries, "qwen")).toBeDefined() // first match wins
     expect(findInstalled(entries, "llama")).toBeUndefined()
   })
+
+  test("airllm/<repo> selects the deep engine with the repo intact", () => {
+    const resolution = resolveLocalTarget("airllm/Qwen/Qwen2.5-Coder-32B-Instruct", entries)
+    expect(resolution.modelRef).toBe("airllm/Qwen/Qwen2.5-Coder-32B-Instruct")
+    expect(resolution.target?.engine).toBe("airllm")
+    expect(resolution.target?.repo).toBe("Qwen/Qwen2.5-Coder-32B-Instruct")
+    expect(resolution.target?.modelName).toBe("Qwen2.5-Coder-32B-Instruct")
+    expect(resolution.error).toBeUndefined()
+  })
+
+  test("an installed GGUF always goes to llama.cpp, never the deep engine", () => {
+    expect(resolveLocalTarget(undefined, entries).target?.engine).toBe("llama-cpp")
+  })
+
+  test("a local directory can be run deeply", () => {
+    const resolution = resolveLocalTarget("airllm/D:\\weights\\my-model", entries)
+    expect(resolution.target?.repo).toBe("D:\\weights\\my-model")
+    expect(resolution.target?.modelName).toBe("my-model")
+  })
 })

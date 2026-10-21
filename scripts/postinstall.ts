@@ -89,8 +89,9 @@ if (process.env.IMURUN_SKIP_SETUP === "1") {
   say("")
   say("  IMURUN is installed.")
   say("  Setting this machine up — the engine and a model that fits it.")
-  say("  This downloads a few gigabytes. To skip it, run:")
-  say("    IMURUN_SKIP_SETUP=1 npm install -g imurun")
+  say("  A small model downloads first (a gigabyte or two), so the first")
+  say("  answer comes quickly; `imurun models` has the larger ones.")
+  say("  To skip this, run: IMURUN_SKIP_SETUP=1 npm install -g imurun")
   say("")
 
   const binary = nativeBinary()
@@ -101,11 +102,11 @@ if (process.env.IMURUN_SKIP_SETUP === "1") {
   let ranWith = ""
   if (binary) {
     ranWith = "the standalone executable"
-    child = spawnSync(binary, ["setup", "--quiet"], { stdio: quiet ? "ignore" : "inherit" })
+    child = spawnSync(binary, ["setup"], { stdio: quiet ? "ignore" : "inherit" })
   } else if (program) {
     for (const candidate of findBun()) {
       ranWith = "Bun"
-      child = spawnSync(candidate.command, [program, "setup", "--quiet"], {
+      child = spawnSync(candidate.command, [program, "setup"], {
         stdio: quiet ? "ignore" : "inherit",
         shell: candidate.shell,
       })

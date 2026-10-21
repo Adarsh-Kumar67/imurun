@@ -200,3 +200,35 @@ export function recommendModels(
 export function fittingModels(profile: HardwareProfile, catalog?: readonly ModelInfo[]): ModelRecommendation[] {
   return recommendModels(profile, catalog).recommendations.filter((r) => r.fits)
 }
+
+/** The largest download an automatic first run will start, in gigabytes. */
+export const QUICK_START_GB = 2.5
+
+/**
+ * The model to install when nobody has chosen one.
+ *
+ * The best-fitting model is not always the right *first* model: on a 16 GB
+ * machine that is a 7B at 5.7 GB, which is half an hour of downloading
+ * before the first answer, on a connection that may be slower than that. A
+ * first run should reach a working answer quickly, so this prefers the best
+ * model that downloads inside a small budget, and only falls back to the best
+ * fit when nothing smaller fits at all.
+ *
+ * `/model` is where the larger ones live, once the machine is working.
+ */
+export function quickStartModels(
+  profile: HardwareProfile,
+  catalog?: readonly ModelInfo[],
+  options: GradientOptions & { maxDownloadGB?: number } = {},
+): ModelRecommendation[] {
+  const fitting = fittingModels(profile, catalog)
+  const budget = options.maxDownloadGB ?? QUICK_START_GB
+  const small = fitting.filter((recommendation) => {
+    const variant = recommendation.model.quantizations.find(
+      (quantization) => quantization.type === recommendation.recommendedQuant,
+    )
+    return variant !== undefined && variant.sizeGB <= budget
+  })
+  // A machine where even the smallest fit is larger still gets a model.
+  return small.length > 0 ? small : fitting
+}

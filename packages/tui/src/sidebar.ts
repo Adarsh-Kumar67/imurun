@@ -26,9 +26,10 @@ export interface SidebarState {
   /**
    * Estimated context usage for the active session. `max` is the model's real
    * window when it is known; when it is not, the panel says so rather than
-   * inventing a number.
+   * inventing a number. `estimated` marks a figure the engine has not yet
+   * confirmed with its own token count.
    */
-  context?: { used: number; max?: number }
+  context?: { used: number; max?: number; estimated?: boolean }
   /** Thinking effort, shown only when the provider accepts one. */
   effort?: string
   /** Steps of the written plan (`.imurun/PLAN.md`), when there is one. */
@@ -117,7 +118,17 @@ export function sidebarLines(state: SidebarState): string[] {
     if (max) {
       const { bar, percent } = contextBar(state.context.used, max, Math.max(inner - 6, 6))
       lines.push(value(`${bar} ${theme.dim(`${percent}%`)}`, width))
-      lines.push(value(theme.dim(`${formatTokens(state.context.used)} / ${formatTokens(max)} tok`), width))
+      lines.push(
+        value(
+          theme.dim(
+            `${formatTokens(state.context.used)} / ${formatTokens(max)} tok${state.context.estimated ? " (est.)" : ""}`,
+          ),
+          width,
+        ),
+      )
+      // The window is folded automatically at 90%; saying so turns a sudden
+      // "context full" notice into something the user saw coming.
+      if (percent >= 75) lines.push(value(theme.muted("folds itself at 90%"), width))
     } else {
       lines.push(value(theme.dim(`${formatTokens(state.context.used)} tok used`), width))
       lines.push(value(theme.dim("window unknown"), width))

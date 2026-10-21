@@ -622,6 +622,82 @@ describe("agent loop", () => {
     server.close()
   })
 
+  test("a history at 90% of the window is folded before the model is asked", async () => {
+    const server = startFakeServer([textScript("Folded, then answered.")])
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+
+    // Enough history that the prompt is over 90% of a small window before the
+    // first request is made.
+    const filler = "the quick brown fox jumps over the lazy dog. ".repeat(60)
+    for (let index = 0; index < 8; index++) {
+      h.sessions.addMessage({ sessionId: session.id, role: "user", content: `note ${index}: ${filler}` })
+      h.sessions.addMessage({ sessionId: session.id, role: "assistant", content: `noted ${index}: ${filler}` })
+    }
+
+    const { events, onEvent } = collectingEvents()
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+    })
+
+    const result = await agent.run({
+      sessionId: session.id,
+      input: "continue",
+      workingDir: h.workingDir,
+      contextWindow: 4096,
+      onEvent,
+    })
+
+    expect(result.text).toContain("Folded, then answered")
+    // The fold happened before the request, so there was no refusal to recover
+    // from: one request, no engine error.
+    expect(server.requests.length).toBe(1)
+    expect(events.some((event) => event.type === "error")).toBe(false)
+    expect(
+      events.some((event) => event.type === "compacted" && event.reason === "threshold"),
+    ).toBe(true)
+
+    h.store.close()
+    server.close()
+  })
+
+  test("a digest that folded messages is in the prompt on every later run", async () => {
+    const server = startFakeServer([textScript("ok")])
+    const h = await harness(server.url)
+    const session = h.sessions.create({ workingDir: h.workingDir, model: "test-model" })
+    const memory = new MemoryStore()
+
+    // A previous `/compact` deleted three messages; the digest is their only
+    // record now.
+    h.sessions.addMessage({ sessionId: session.id, role: "user", content: "NOTE: the API listens on port 8080" })
+    await memory.summarize(session, h.sessions.getMessages(session.id), 3)
+
+    const agent = new Agent({
+      sessions: h.sessions,
+      providers: h.providers,
+      tools: h.tools,
+      permissions: new PermissionManager(h.store, { rules: [], disabledTools: [] }),
+      config: h.config,
+      memory,
+    })
+
+    await agent.run({ sessionId: session.id, input: "what port?", workingDir: h.workingDir })
+
+    const body = server.requests[0]!
+    const messages = body.messages as Array<{ role: string; content: unknown }>
+    const system = messages.find((message) => message.role === "system")
+    const text = JSON.stringify(system)
+    expect(text).toContain("stands in for 3 earlier message(s)")
+    expect(text).toContain("port 8080")
+
+    h.store.close()
+    server.close()
+  })
+
   test("a tool call cut off mid-payload becomes a request to continue", async () => {
     // the write call's arguments are truncated: the JSON never closes
     const truncated = toolCallScript("call_1", "write", JSON.stringify({ path: "big.txt", content: "x".repeat(50) }))

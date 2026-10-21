@@ -21,7 +21,7 @@ import type { ToolRegistry } from "../tool/registry"
 import type { ToolContext } from "../tool/types"
 import { PermissionManager, type PermissionRequest } from "../permission/permission"
 import { assembleModelMessages, planCompaction, planHistoryChars } from "./context"
-import { DEFAULT_CONTEXT_WINDOW, MAX_MESSAGE_CHARS } from "./context"
+import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, MAX_MESSAGE_CHARS } from "./context"
 import { ThinkSplitter } from "./think-splitter"
 import { supportsReasoningEffort } from "../provider/registry"
 import {
@@ -51,6 +51,7 @@ import {
   ResearchEngine,
   claimCheckPrompt,
   claimQueries,
+  needsCrossCheck,
   unsupportedClaims,
   type ResearchBundle,
 } from "../research/engine"
@@ -75,7 +76,7 @@ export type AgentEvent =
   | { type: "notice"; text: string; tone?: "info" | "warn" }
   | { type: "skill"; id: string; name: string }
   /** History had to be folded into a summary to fit the window. */
-  | { type: "compacted"; droppedMessages: number; keptMessages: number; reason: "budget" | "overflow" | "manual" }
+  | { type: "compacted"; droppedMessages: number; keptMessages: number; reason: "budget" | "overflow" | "manual" | "threshold" }
   /** The answer hit the output limit; the run asked the model to carry on. */
   | { type: "continuation"; attempt: number }
   /** Files changed this turn and none were inspected since; a check was asked for. */
@@ -199,6 +200,12 @@ export interface AgentOptions {
 const LONG_RUN_NOTICE_STEPS = 100
 /** How many times a request may be recomputed for being over the window. */
 const MAX_CONTEXT_RETRIES = 2
+/**
+ * Fold the history at this fraction of the window, before the request that
+ * would not fit is made. The output reserve already keeps some room; this is
+ * the point where the *conversation* has grown past what is comfortable.
+ */
+const COMPACT_AT = 0.9
 /** How many times an answer cut off by the output limit is carried on. */
 const MAX_CONTINUATIONS = 3
 
@@ -348,6 +355,17 @@ export class Agent {
     const history = () => sessions.getMessages(session.id).filter((m) => m.role !== "system")
 
     let compactedSummary: string | undefined
+    // A session that was compacted with `/compact` no longer holds the messages
+    // the digest describes. That digest is the only record of them, so it goes
+    // into the prompt on every run - not only the run that folded them.
+    if (memory && memoryOn) {
+      try {
+        const stored = await memory.getDigest(session.id)
+        if (stored && (stored.folded ?? 0) > 0) compactedSummary = digestToPrompt(stored)
+      } catch (error) {
+        this.log.debug(`stored digest skipped: ${errorMessage(error)}`)
+      }
+    }
     let memories: string[] = []
     let durableNotes: string[] = []
     let todos: string[] = []
@@ -625,10 +643,23 @@ export class Agent {
      * the prompt. The digest is written to ~/.imurun/memory/, so the model keeps
      * the thread of the dropped turns — this is what makes dropping history
      * "freeing context" rather than "forgetting".
+     *
+     * `threshold` is the automatic one: it fires at 90% of the window, before
+     * the model is asked for anything, and folds down to roughly half. Waiting
+     * for the engine to refuse means the request that needed the room is the
+     * one that fails.
      */
-    const compact = async (reason: "budget" | "overflow" | "manual"): Promise<void> => {
-      const plan = planCompaction(history(), { maxChars: historyBudget, minMessages: 2 })
-      if (memory && memoryOn && config.memory.autoSummarize && plan.dropped.length > 0) {
+    const compact = async (reason: "budget" | "overflow" | "manual" | "threshold"): Promise<void> => {
+      /** How much history the prompt is allowed to keep after this fold. */
+      const foldTo = (): number => {
+        const base = planHistoryChars(contextWindow, system.length)
+        if (reason === "threshold") return Math.max(1_500, Math.floor(base * 0.6))
+        if (run.tightContext || reason === "overflow") return Math.floor(base * 0.5)
+        return base
+      }
+
+      const preliminary = planCompaction(history(), { maxChars: foldTo(), minMessages: 2 })
+      if (memory && memoryOn && config.memory.autoSummarize && preliminary.dropped.length > 0) {
         try {
           const digest = await memory.summarize(session, history())
           compactedSummary = digestToPrompt(digest)
@@ -637,8 +668,8 @@ export class Agent {
         }
       }
       system = buildSystem(compactedSummary)
-      historyBudget = planHistoryChars(contextWindow, system.length)
-      if (run.tightContext || reason === "overflow") historyBudget = Math.floor(historyBudget * 0.5)
+      historyBudget = foldTo()
+      const plan = planCompaction(history(), { maxChars: historyBudget, minMessages: 2 })
       run.onEvent?.({
         type: "compacted",
         droppedMessages: plan.dropped.length,
@@ -701,6 +732,27 @@ export class Agent {
       let stepUsage: AgentUsage = zeroUsage()
       let streamError: Error | undefined
       let finishReason: string | undefined
+
+      // ── Fold before it is full ───────────────────────────────────────────
+      // The prompt grows with every step: the model's own answers and the
+      // results of its tools all go back in. Checking here, at the top of the
+      // step, means the fold happens while there is still room to finish the
+      // answer - instead of the engine refusing the request that needed it.
+      const requestTokens = (): number =>
+        Math.ceil(system.length / CHARS_PER_TOKEN) +
+        Object.keys(aiTools).length * 120 +
+        history().reduce(
+          (total, message) => total + Math.ceil(messageText(message).length / CHARS_PER_TOKEN),
+          0,
+        )
+      if (contextWindow > 0 && requestTokens() >= contextWindow * COMPACT_AT) {
+        // Folding when nothing would fall out just shrinks the budget for no
+        // reason, and a small window would then fold on every single step.
+        const target = Math.max(1_500, Math.floor(planHistoryChars(contextWindow, system.length) * 0.6))
+        if (planCompaction(history(), { maxChars: target, minMessages: 2 }).dropped.length > 0) {
+          await compact("threshold")
+        }
+      }
 
       this.log.debug(`step ${steps}: streaming from ${resolved.provider.id}/${resolved.modelId}`)
 
@@ -926,7 +978,7 @@ export class Agent {
           text.trim()
         ) {
           const claims = unsupportedClaims(text, researchBundle)
-          if (claims.length > 0) {
+          if (claims.length > 0 && needsCrossCheck(text, researchBundle)) {
             const queries = claimQueries(claims)
             if (queries.length > 0) {
               researchVerifications++

@@ -126,16 +126,24 @@ typing and never fail when no model is available. A digest collects:
 | Open todos | Recognised todo lines and carried-forward ones. |
 | Completed | Recognised done lines. |
 | Highlights | The first line of notable assistant messages. |
+| Facts | Lines marked `NOTE:`, `FACT:`, `IMPORTANT:`, `REMEMBER:` or `CONSTRAINT:`. |
+| Key names | Identifiers such as `NPM_TOKEN` or `GITHUB_PAT` — the name only, never the value. |
+| Topics | Markdown headings and the identifiers written in backticks. |
 
 Open todos **carry forward**: an unfinished item from the previous digest stays on
 the list until a later message marks it done, so nothing silently falls off
-between passes. The index keeps the newest **200** digests; older ones are dropped
-from the index (their markdown files are written when the digest is saved).
+between passes. Files, commands, highlights, facts, key names and topics
+accumulate across passes for the same reason. The index keeps the newest **200**
+digests; older ones are dropped from the index (their markdown files are written
+when the digest is saved).
 
 When older turns are folded away to free the window, the digest is rendered back
 into the system prompt as a compact section (`digestToPrompt`), so dropping history
-is "freeing context", not "forgetting". `/memory` shows memory stats and open
-todos; `/memory <query>` searches it.
+is "freeing context", not "forgetting". `/compact` goes further: it writes the
+digest first, then deletes the folded messages from the session, and records how
+many it stands in for (`folded`). A digest with a non-zero `folded` count is
+injected on every later run, because it is now the only record of those turns.
+`/memory` shows memory stats and open todos; `/memory <query>` searches it.
 
 ## The progress ledger
 

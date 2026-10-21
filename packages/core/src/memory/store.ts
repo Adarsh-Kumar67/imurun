@@ -284,11 +284,14 @@ export class MemoryStore {
 
   /**
    * Summarizes a session's messages and persists the digest. `previous` (the
-   * digest already on disk) supplies carry-forward todos.
+   * digest already on disk) supplies carry-forward todos. `folded` counts
+   * messages this pass removed from the session, so the digest knows it is the
+   * only record of them.
    */
   async summarize(
     session: Pick<Session, "id" | "title" | "workingDir" | "model" | "createdAt" | "updatedAt">,
     messages: Message[],
+    folded = 0,
   ): Promise<SessionDigest> {
     const previous = await this.getDigest(session.id)
     const digest = buildDigest({
@@ -300,6 +303,7 @@ export class MemoryStore {
       updatedAt: session.updatedAt,
       messages,
       previous,
+      folded,
     })
     return this.saveDigest(digest)
   }

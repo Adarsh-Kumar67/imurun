@@ -491,6 +491,45 @@ export function unsupportedClaims(answer: string, bundle: ResearchBundle): Claim
   return claims
 }
 
+/**
+ * How well the evidence supports the answer's factual sentences, 0..1.
+ *
+ * Not a probability: a share of the claim's terms (numbers weighted double)
+ * that appear in the gathered passages. It exists so "check the answer" can be
+ * a decision with a threshold behind it instead of an always-on second search.
+ */
+export function answerConfidence(answer: string, bundle: ResearchBundle): number {
+  const claims = extractClaims(answer)
+  if (claims.length === 0) return 1
+  return claims.reduce((sum, claim) => sum + claimCoverage(claim, bundle), 0) / claims.length
+}
+
+/** The point below which an answer is checked against the sources again. */
+export const CROSS_CHECK_CONFIDENCE = 0.75
+
+/**
+ * Whether the draft needs a cross-check before it is final.
+ *
+ * Two reasons only: the evidence supports less than 75% of what was said, or
+ * something specific conflicts with it - an invented citation, or a number no
+ * source contains. Everything else is left alone; a second search on every
+ * answer would make the tool slower without making it more correct.
+ */
+export function needsCrossCheck(answer: string, bundle: ResearchBundle): boolean {
+  if (bundle.passages.length === 0) return false
+
+  const citations = [...answer.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1]))
+  if (citations.some((citation) => citation < 1 || citation > bundle.sources.length)) return true
+
+  const numbers = answer.match(/\b\d+(?:\.\d+)*\b/g) ?? []
+  const conflicting = numbers.some(
+    (number) => !bundle.passages.some((passage) => passage.text.includes(number)),
+  )
+  if (conflicting) return true
+
+  return answerConfidence(answer, bundle) < CROSS_CHECK_CONFIDENCE
+}
+
 /** One bounded follow-up question per unsupported claim. */
 export function claimQueries(claims: readonly Claim[], limit = 2): string[] {
   return claims

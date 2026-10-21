@@ -7,9 +7,46 @@
 import { theme, sym } from "./theme"
 import chalk from "chalk"
 import { clampVisible, padVisible, visibleWidth, wrapText } from "./text"
+import { hyperlink } from "./hyperlink"
 import { spinnerFrame } from "./animate"
-import { DEFAULT_MARKDOWN_PALETTE, highlightCode, renderMarkdown } from "./markdown"
+import { DEFAULT_MARKDOWN_PALETTE, highlightCode, renderMarkdown, type MarkdownPalette } from "./markdown"
 import { progressBar, progressFraction, progressPhrase } from "./progress"
+
+/**
+ * Turns bare URLs into OSC 8 links, after wrapping.
+ *
+ * Post-processing matters: wrapping measures visible characters, so it has to
+ * see the plain text. Terminals without OSC 8 ignore the sequence and show the
+ * URL itself, so nothing is lost either way.
+ */
+function linkify(line: string): string {
+  return line.replace(/https?:\/\/[^\s<>()[\]"'`]+/g, (url) => hyperlink(url, url))
+}
+
+/**
+ * The answer's own typography.
+ *
+ * Everything else in the transcript is quiet - dim tool lines, muted input,
+ * a collapsed thought. The answer is the one thing the user came for, so it
+ * gets the brand's warm palette rather than the default terminal rainbow:
+ * sand for headings and code, the one red for keywords, grey for comments.
+ * Built per render because `setTheme` swaps the theme's values in place.
+ */
+function answerPalette(): Partial<MarkdownPalette> {
+  return {
+    heading: theme.accent.bold,
+    code: theme.accent,
+    keyword: theme.red,
+    string: theme.ok,
+    number: theme.warn,
+    comment: theme.dim,
+    bullet: theme.accent,
+    quote: theme.dim,
+    rule: theme.rule,
+    link: (text: string) => theme.path.underline(text),
+    dim: theme.dim,
+  }
+}
 
 export type Tone = "info" | "ok" | "warn" | "error"
 
@@ -70,6 +107,12 @@ export type Block =
       startedAt?: number
       /** What kind of thinking this is, which decides its colour and icon. */
       category?: ThinkingCategory
+      /**
+       * Overrides the "thinking · 12s" label. Used by blocks that share the
+       * collapsed/click-to-expand behaviour but are not thinking - research,
+       * for one.
+       */
+      label?: string
     }
   | {
       kind: "tool"
@@ -165,7 +208,7 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
     case "assistant": {
       const caret = block.streaming ? (options.caret ?? "\u258c") : ""
       if (!block.text.trim() && !caret) return []
-      return renderMarkdown(block.text, { width, caret: caret || undefined })
+      return renderMarkdown(block.text, { width, caret: caret || undefined, palette: answerPalette() })
     }
 
     case "reasoning": {
@@ -178,7 +221,7 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
         ? Math.max(Math.floor((now - block.startedAt) / 1000), 0)
         : (block.seconds ?? 0)
       const clock = `${String(elapsed).padStart(2, "0")}s`
-      const label = `${style.label} \u00b7 ${clock}`
+      const label = block.label ?? `${style.label} \u00b7 ${clock}`
       const head =
         `  ${style.color(style.icon)} ` +
         theme.dim(block.expanded ? label : `${label} \u2014 click to expand`)
@@ -190,7 +233,7 @@ export function renderBlock(block: Block, width: number, options: RenderOptions 
       }
       const wrapped = wrapText(block.text, Math.max(width - 4, 8))
       const lines = [clampVisible(head, width)]
-      for (const line of wrapped) lines.push(clampVisible(`    ${theme.dim(line)}`, width))
+      for (const line of wrapped) lines.push(clampVisible(`    ${theme.dim(linkify(line))}`, width))
       return lines
     }
 

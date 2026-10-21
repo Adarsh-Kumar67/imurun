@@ -205,6 +205,24 @@ describe("MemoryStore", () => {
     expect((await store.stats()).sessions).toBe(1)
   })
 
+  test("a fold keeps the facts of the messages it stands in for", async () => {
+    const store = new MemoryStore()
+    const first: Message[] = [
+      message({ role: "user", content: "NOTE: the API listens on port 8080" }),
+      message({ role: "assistant", content: "Understood. See `src/server.ts`." }),
+    ]
+    const once = await store.summarize(session, first, 2)
+    expect(once.folded).toBe(2)
+    expect(once.facts?.join(" ")).toContain("port 8080")
+
+    // A later pass sees only the kept tail. What the first pass established
+    // must still be there: the digest is now the only record of those turns.
+    const twice = await store.summarize(session, [message({ role: "user", content: "carry on" })], 1)
+    expect(twice.folded).toBe(3)
+    expect(twice.facts?.join(" ")).toContain("port 8080")
+    expect(twice.topics?.join(" ")).toContain("src/server.ts")
+  })
+
   test("remembers todos across sessions for the same project", async () => {
     const store = new MemoryStore()
     await store.summarize(session, [message({ role: "assistant", content: "TODO: migrate the config loader" })])
